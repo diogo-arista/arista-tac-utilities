@@ -1,22 +1,23 @@
 #!/bin/bash
 
 # #############################################################################
-# Arista TAC Log Collection Script (v8)
+# Arista TAC Log Collection Script (v9)
 #
 # This script collects a support bundle from an Arista EOS device.
 # It can be run directly on the EOS device or remotely from a client machine.
 #
 # Changelog:
-# v8: Corrected remote execution quoting issue using a robust 'Here Document'
-#     method instead of nested quotes with 'bash -c'.
-# v7: Attempted to fix remote shell issue.
-# v6: Added remote execution capability using SSH Connection Sharing.
+# v9: Complete rewrite of remote execution logic based on successful user
+#     testing. Uses a hybrid approach: direct SSH for simple EOS commands,
+#     and a robust heredoc for complex bash commands.
+# v8: Attempted heredoc fix.
+# v7: Attempted remote shell fix.
+# v6: Added remote execution capability.
 #
 # #############################################################################
 
 # --- Functions ---
 
-# Displays the help message for the script.
 display_help() {
     echo "Arista TAC Log Collection Script"
     echo "Automates log collection. Can be run on-box or remotely."
@@ -32,7 +33,6 @@ display_help() {
     echo "  -h, --help       Display this help message and exit."
 }
 
-# Compares two EOS version strings.
 version_ge() {
     test "$(printf '%s\n' "$1" "$2" | sort -V | head -n 1)" = "$2"
 }
@@ -46,9 +46,9 @@ fi
 
 # --- Main Script ---
 
-echo "--- Arista TAC Log Collection Script (v8) ---"
+echo "--- Arista TAC Log Collection Script (v9) ---"
 
-# Determine run mode: "on-box" or "remote"
+# Determine run mode
 RUN_MODE="remote"
 if [ -f /usr/bin/FastCli ]; then
     RUN_MODE="on-box"
@@ -71,8 +71,7 @@ echo "Using Case Number: $CASE_NUMBER"
 # ==============================================================================
 if [[ "$RUN_MODE" == "remote" ]]; then
     echo "Running in Remote Mode."
-    
-    # Get connection details
+
     read -p "Enter target EOS device address: " REMOTE_HOST
     read -p "Enter username for ${REMOTE_HOST}: " REMOTE_USER
 
@@ -81,16 +80,14 @@ if [[ "$RUN_MODE" == "remote" ]]; then
         exit 1
     fi
 
-    # Setup SSH Connection Sharing
     CONTROL_PATH="/tmp/ssh-mux-%r@%h:%p"
     echo "Establishing master SSH connection to ${REMOTE_HOST}..."
     echo "You will be prompted for the password once."
 
     ssh -o ControlMaster=auto -o ControlPath="$CONTROL_PATH" -o ControlPersist=120s -Nf "${REMOTE_USER}@${REMOTE_HOST}"
     SSH_STATUS=$?
-
     if [ $SSH_STATUS -ne 0 ]; then
-        echo "Error: SSH connection failed. Please check host, credentials, or network connectivity."
+        echo "Error: SSH connection failed. Please check host, credentials, or network."
         exit $SSH_STATUS
     fi
 
@@ -101,10 +98,10 @@ if [[ "$RUN_MODE" == "remote" ]]; then
     trap cleanup EXIT
 
     # Helper functions for remote operations
-    run_remote_cmd() {
-        # ** THE FIX IS HERE **
-        # This uses a Here Document to send the command to the remote bash shell.
-        # This is robust and avoids all nested quoting issues.
+    run_remote_eos_cmd() {
+        ssh -o ControlPath="$CONTROL_PATH" "${REMOTE_USER}@${REMOTE_HOST}" "$@"
+    }
+    run_remote_bash_cmd() {
         ssh -o ControlPath="$CONTROL_PATH" "${REMOTE_USER}@${REMOTE_HOST}" bash << EOF
 $@
 EOF
@@ -115,10 +112,11 @@ EOF
 
     # --- Start remote log collection ---
     echo "Checking remote EOS version..."
-    REMOTE_HOSTNAME=$(run_remote_cmd "hostname")
-    # Note: Escaping the $ in awk is no longer necessary with the heredoc method.
-    REMOTE_EOS_VERSION=$(run_remote_cmd "FastCli -p 15 -c 'show version' | grep 'Software image version' | awk '{print \$4}'")
-    
+    # Parse hostname from 'show hostname' output
+    REMOTE_HOSTNAME=$(run_remote_eos_cmd show hostname | awk '/Hostname:/ {print $2}')
+    # Get version by grepping 'show version' output
+    REMOTE_EOS_VERSION=$(run_remote_eos_cmd show version | grep 'Software image version' | awk '{print $4}')
+
     if [[ -z "$REMOTE_EOS_VERSION" ]]; then
         echo "Error: Could not determine remote EOS version. Exiting."
         exit 1
@@ -135,10 +133,10 @@ EOF
             DESTINATION_URL="flash:/"
         fi
 
-        run_remote_cmd "FastCli -p 15 -c \"send support-bundle ${DESTINATION_URL} case-number ${CASE_NUMBER}\""
+        run_remote_eos_cmd send support-bundle "${DESTINATION_URL}" case-number "${CASE_NUMBER}"
         
         echo "Finding generated bundle on remote device..."
-        BUNDLE_PATH=$(run_remote_cmd "ls -t /mnt/flash/support-bundle-SR${CASE_NUMBER}-* 2>/dev/null | head -1")
+        BUNDLE_PATH=$(run_remote_bash_cmd "ls -t /mnt/flash/support-bundle-SR${CASE_NUMBER}-* 2>/dev/null | head -1")
 
         if [[ -z "$BUNDLE_PATH" ]]; then
              echo "Warning: Could not automatically find the bundle. Please check 'flash:' on the remote device."
@@ -152,24 +150,25 @@ EOF
 
     else
         echo "Running on an older EOS version. Manually collecting logs remotely..."
-        DATE_STAMP=$(run_remote_cmd "date +%m_%d.%H%M")
-        DATETIME_STAMP=$(run_remote_cmd "date '+%F--%H%M'")
+        DATE_STAMP=$(run_remote_bash_cmd "date +%m_%d.%H%M")
+        DATETIME_STAMP=$(run_remote_bash_cmd "date '+%F--%H%M'")
 
         echo "Step 1/7: Collecting /var/log/..."
-        run_remote_cmd "cd / && sudo tar --exclude lastlog -czvf /mnt/flash/${CASE_NUMBER}-${REMOTE_HOSTNAME}-var-log-${DATE_STAMP}.tar.gz var/log/"
+        run_remote_bash_cmd "cd / && sudo tar --exclude lastlog -czvf /mnt/flash/${CASE_NUMBER}-${REMOTE_HOSTNAME}-var-log-${DATE_STAMP}.tar.gz var/log/"
         echo "Step 2/7: Collecting scheduled tech-support history..."
-        run_remote_cmd "cd /mnt/flash && sudo tar -cvf /mnt/flash/${CASE_NUMBER}-${REMOTE_HOSTNAME}-history-tech-${DATE_STAMP}.tar schedule/tech-support/"
+        run_remote_bash_cmd "cd /mnt/flash && sudo tar -cvf /mnt/flash/${CASE_NUMBER}-${REMOTE_HOSTNAME}-history-tech-${DATE_STAMP}.tar schedule/tech-support/"
         echo "Step 3/7: Collecting debug folder..."
-        run_remote_cmd "cd /mnt/flash && sudo tar -czvf /mnt/flash/${CASE_NUMBER}-${REMOTE_HOSTNAME}-debug-folder-${DATE_STAMP}.tar.gz debug/"
+        run_remote_bash_cmd "cd /mnt/flash && sudo tar -czvf /mnt/flash/${CASE_NUMBER}-${REMOTE_HOSTNAME}-debug-folder-${DATE_STAMP}.tar.gz debug/"
         echo "Step 4/7: Collecting Fossil folder..."
-        run_remote_cmd "cd /mnt/flash && sudo tar -czvf /mnt/flash/${CASE_NUMBER}-${REMOTE_HOSTNAME}-fossil-folder-${DATE_STAMP}.tar.gz Fossil/"
+        run_remote_bash_cmd "cd /mnt/flash && sudo tar -czvf /mnt/flash/${CASE_NUMBER}-${REMOTE_HOSTNAME}-fossil-folder-${DATE_STAMP}.tar.gz Fossil/"
         echo "Step 5/7: Collecting core files..."
-        run_remote_cmd "cd /var/ && sudo tar --dereference -czvf /mnt/flash/${CASE_NUMBER}-${REMOTE_HOSTNAME}-var-core-${DATE_STAMP}.tar.gz core/"
+        run_remote_bash_cmd "cd /var/ && sudo tar --dereference -czvf /mnt/flash/${CASE_NUMBER}-${REMOTE_HOSTNAME}-var-core-${DATE_STAMP}.tar.gz core/"
         echo "Step 6/7: Generating show tech-support..."
-        run_remote_cmd "FastCli -p 15 -c 'show tech-support' | gzip > /mnt/flash/${CASE_NUMBER}-${REMOTE_HOSTNAME}-show-tech-${DATE_STAMP}.log.gz"
+        # We use FastCli here to bridge from bash to a privileged EOS command with a pipe
+        run_remote_bash_cmd "FastCli -p 15 -c 'show tech-support' | gzip > /mnt/flash/${CASE_NUMBER}-${REMOTE_HOSTNAME}-show-tech-${DATE_STAMP}.log.gz"
         echo "Step 7/7: Bundling all collected files..."
         FINAL_BUNDLE_NAME="TAC-bundle-${CASE_NUMBER}-${REMOTE_HOSTNAME}-${DATETIME_STAMP}.tar"
-        run_remote_cmd "cd /mnt/flash && tar --remove-files -cf ${FINAL_BUNDLE_NAME} ${CASE_NUMBER}-*"
+        run_remote_bash_cmd "cd /mnt/flash && tar --remove-files -cf ${FINAL_BUNDLE_NAME} ${CASE_NUMBER}-*"
         
         BUNDLE_PATH="/mnt/flash/${FINAL_BUNDLE_NAME}"
         echo "Downloading ${BUNDLE_PATH} to your local machine..."

@@ -1,18 +1,16 @@
 #!/bin/bash
 
 # #############################################################################
-# Arista TAC Log Collection Script (v9)
+# Arista TAC Log Collection Script (v10)
 #
 # This script collects a support bundle from an Arista EOS device.
 # It can be run directly on the EOS device or remotely from a client machine.
 #
 # Changelog:
-# v9: Complete rewrite of remote execution logic based on successful user
-#     testing. Uses a hybrid approach: direct SSH for simple EOS commands,
-#     and a robust heredoc for complex bash commands.
-# v8: Attempted heredoc fix.
-# v7: Attempted remote shell fix.
-# v6: Added remote execution capability.
+# v10: Added an interactive prompt to make the final download optional when
+#      running in remote mode.
+# v9:  Complete rewrite of remote execution logic based on successful user
+#      testing. Uses a hybrid approach for remote commands.
 #
 # #############################################################################
 
@@ -46,7 +44,7 @@ fi
 
 # --- Main Script ---
 
-echo "--- Arista TAC Log Collection Script (v9) ---"
+echo "--- Arista TAC Log Collection Script (v10) ---"
 
 # Determine run mode
 RUN_MODE="remote"
@@ -112,9 +110,7 @@ EOF
 
     # --- Start remote log collection ---
     echo "Checking remote EOS version..."
-    # Parse hostname from 'show hostname' output
     REMOTE_HOSTNAME=$(run_remote_eos_cmd show hostname | awk '/Hostname:/ {print $2}')
-    # Get version by grepping 'show version' output
     REMOTE_EOS_VERSION=$(run_remote_eos_cmd show version | grep 'Software image version' | awk '{print $4}')
 
     if [[ -z "$REMOTE_EOS_VERSION" ]]; then
@@ -137,16 +133,24 @@ EOF
         
         echo "Finding generated bundle on remote device..."
         BUNDLE_PATH=$(run_remote_bash_cmd "ls -t /mnt/flash/support-bundle-SR${CASE_NUMBER}-* 2>/dev/null | head -1")
+        BUNDLE_FILENAME=$(basename "${BUNDLE_PATH}")
 
         if [[ -z "$BUNDLE_PATH" ]]; then
              echo "Warning: Could not automatically find the bundle. Please check 'flash:' on the remote device."
              exit 0
         fi
 
-        echo "Downloading ${BUNDLE_PATH} to your local machine..."
-        scp_remote_file "${BUNDLE_PATH}" "."
-        BUNDLE_FILENAME=$(basename "${BUNDLE_PATH}")
-        echo -e "\n-----------\n\nCompleted. Bundle downloaded to your current directory: ${BUNDLE_FILENAME}\n"
+        # --- NEW: Optional Download Logic ---
+        echo ""
+        echo "Log bundle '${BUNDLE_FILENAME}' is ready on the remote device."
+        read -p "Would you like to download it to your current directory now? (y/n): " DOWNLOAD_CHOICE
+        if [[ "$DOWNLOAD_CHOICE" =~ ^[Yy]$ ]]; then
+            echo "Downloading ${BUNDLE_PATH} to your local machine..."
+            scp_remote_file "${BUNDLE_PATH}" "."
+            echo -e "\n-----------\n\nCompleted. Bundle downloaded to your current directory: ${BUNDLE_FILENAME}\n"
+        else
+            echo -e "\n-----------\n\nCompleted. You can download the bundle later from the switch at: ${BUNDLE_PATH}\n"
+        fi
 
     else
         echo "Running on an older EOS version. Manually collecting logs remotely..."
@@ -164,16 +168,24 @@ EOF
         echo "Step 5/7: Collecting core files..."
         run_remote_bash_cmd "cd /var/ && sudo tar --dereference -czvf /mnt/flash/${CASE_NUMBER}-${REMOTE_HOSTNAME}-var-core-${DATE_STAMP}.tar.gz core/"
         echo "Step 6/7: Generating show tech-support..."
-        # We use FastCli here to bridge from bash to a privileged EOS command with a pipe
         run_remote_bash_cmd "FastCli -p 15 -c 'show tech-support' | gzip > /mnt/flash/${CASE_NUMBER}-${REMOTE_HOSTNAME}-show-tech-${DATE_STAMP}.log.gz"
         echo "Step 7/7: Bundling all collected files..."
         FINAL_BUNDLE_NAME="TAC-bundle-${CASE_NUMBER}-${REMOTE_HOSTNAME}-${DATETIME_STAMP}.tar"
         run_remote_bash_cmd "cd /mnt/flash && tar --remove-files -cf ${FINAL_BUNDLE_NAME} ${CASE_NUMBER}-*"
         
         BUNDLE_PATH="/mnt/flash/${FINAL_BUNDLE_NAME}"
-        echo "Downloading ${BUNDLE_PATH} to your local machine..."
-        scp_remote_file "${BUNDLE_PATH}" "."
-        echo -e "\n-----------\n\nCompleted. Bundle downloaded to your current directory: ${FINAL_BUNDLE_NAME}\n"
+        
+        # --- NEW: Optional Download Logic ---
+        echo ""
+        echo "Log bundle '${FINAL_BUNDLE_NAME}' is ready on the remote device."
+        read -p "Would you like to download it to your current directory now? (y/n): " DOWNLOAD_CHOICE
+        if [[ "$DOWNLOAD_CHOICE" =~ ^[Yy]$ ]]; then
+            echo "Downloading ${BUNDLE_PATH} to your local machine..."
+            scp_remote_file "${BUNDLE_PATH}" "."
+            echo -e "\n-----------\n\nCompleted. Bundle downloaded to your current directory: ${FINAL_BUNDLE_NAME}\n"
+        else
+            echo -e "\n-----------\n\nCompleted. You can download the bundle later from the switch at: ${BUNDLE_PATH}\n"
+        fi
     fi
 
 # ==============================================================================

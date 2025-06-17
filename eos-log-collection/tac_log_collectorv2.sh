@@ -1,17 +1,15 @@
 #!/bin/bash
 
 # #############################################################################
-# Arista TAC Log Collection Script (v15)
+# Arista TAC Log Collection Script (v16)
 #
 # This script collects a support bundle from an Arista EOS device.
 # It can be run directly on the EOS device or remotely from a client machine.
 #
 # Changelog:
-# v15: Added an option to decompress the downloaded log bundle into a subfolder
-#      for immediate analysis.
-# v14: FOR TESTING - Commented out large log collection (debug, cores, show-tech)
-#      in the legacy EOS mode to speed up testing cycles.
-# v13: Added logic to create a date-stamped folder for local log storage.
+# v16: Added debugging to the decompress_bundle function to diagnose why the
+#      prompt is not appearing.
+# v15: Added an option to decompress the downloaded log bundle.
 #
 # #############################################################################
 
@@ -38,11 +36,19 @@ version_ge() {
 
 decompress_bundle() {
     local local_bundle_path="$1"
+    
+    # --- NEW: Debugging lines ---
+    echo "DEBUG: Entered decompress_bundle function."
+    echo "DEBUG: Checking for local file at path: '${local_bundle_path}'"
 
     if [[ ! -f "$local_bundle_path" ]]; then
+        echo "DEBUG: File check failed. The file does not exist or is not a regular file."
         echo "Warning: Cannot find downloaded bundle at '${local_bundle_path}' to decompress."
         return 1
     fi
+    
+    echo "DEBUG: File check passed. Proceeding to prompt."
+    # --- End Debugging lines ---
 
     local local_dir
     local bundle_filename
@@ -52,7 +58,6 @@ decompress_bundle() {
     local_dir=$(dirname "$local_bundle_path")
     bundle_filename=$(basename "$local_bundle_path")
     
-    # Create a clean subfolder name by removing archive extensions
     subfolder_name="${bundle_filename%.zip}"
     subfolder_name="${subfolder_name%.tar}"
     subfolder_name="${subfolder_name%.tar.gz}"
@@ -65,7 +70,6 @@ decompress_bundle() {
         echo "Decompressing bundle..."
         mkdir -p "$decompression_path"
 
-        # Handle different archive types
         if [[ "$bundle_filename" == *.zip ]]; then
             unzip -q "$local_bundle_path" -d "$decompression_path"
             echo "Successfully decompressed to: ${decompression_path}"
@@ -88,7 +92,7 @@ fi
 
 # --- Main Script ---
 
-echo "--- Arista TAC Log Collection Script (v15 - Testing Version) ---"
+echo "--- Arista TAC Log Collection Script (v16 - Debug Version) ---"
 
 # Determine run mode
 RUN_MODE="remote"
@@ -192,31 +196,24 @@ EOF
         echo -e "\nPlease attach this local file to your support case."
         echo -e "------------------------------------------------------------\n"
         
-        # --- NEW: Call decompression function ---
         decompress_bundle "./${LOCAL_DATE_FOLDER}/${BUNDLE_FILENAME}"
 
     else
         echo "Running on an older EOS version. Manually collecting logs remotely..."
         DATE_STAMP=$(run_remote_bash_cmd "date +%m_%d.%H%M")
         DATETIME_STAMP=$(run_remote_bash_cmd "date '+%F--%H%M'")
-
+        
+        # FOR TESTING: Disable large file collection
         echo "Step 1/7: Collecting /var/log/..."
         run_remote_bash_cmd "cd / && sudo tar --exclude lastlog -czvf /mnt/flash/${CASE_NUMBER}-${REMOTE_HOSTNAME}-var-log-${DATE_STAMP}.tar.gz var/log/"
         echo "Step 2/7: Collecting scheduled tech-support history..."
         run_remote_bash_cmd "cd /mnt/flash && sudo tar -cvf /mnt/flash/${CASE_NUMBER}-${REMOTE_HOSTNAME}-history-tech-${DATE_STAMP}.tar schedule/tech-support/"
-        
-        ## FOR TESTING ##
         echo "Step 3/7: Collecting debug folder... (SKIPPED FOR TESTING)"
         #run_remote_bash_cmd "cd /mnt/flash && sudo tar -czvf /mnt/flash/${CASE_NUMBER}-${REMOTE_HOSTNAME}-debug-folder-${DATE_STAMP}.tar.gz debug/"
-        
         echo "Step 4/7: Collecting Fossil folder..."
         run_remote_bash_cmd "cd /mnt/flash && sudo tar -czvf /mnt/flash/${CASE_NUMBER}-${REMOTE_HOSTNAME}-fossil-folder-${DATE_STAMP}.tar.gz Fossil/"
-        
-        ## FOR TESTING ##
         echo "Step 5/7: Collecting core files... (SKIPPED FOR TESTING)"
         #run_remote_bash_cmd "cd /var/ && sudo tar --dereference -czvf /mnt/flash/${CASE_NUMBER}-${REMOTE_HOSTNAME}-var-core-${DATE_STAMP}.tar.gz core/"
-        
-        ## FOR TESTING ##
         echo "Step 6/7: Generating show tech-support... (SKIPPED FOR TESTING)"
         #run_remote_bash_cmd "FastCli -p 15 -c 'show tech-support' | gzip > /mnt/flash/${CASE_NUMBER}-${REMOTE_HOSTNAME}-show-tech-${DATE_STAMP}.log.gz"
         
@@ -237,7 +234,6 @@ EOF
         echo -e "\nPlease attach this local file to your support case."
         echo -e "------------------------------------------------------------\n"
         
-        # --- NEW: Call decompression function ---
         decompress_bundle "./${LOCAL_DATE_FOLDER}/${FINAL_BUNDLE_NAME}"
     fi
 
@@ -245,7 +241,7 @@ EOF
 # --- ON-BOX EXECUTION MODE ---
 # ==============================================================================
 else
-    # This section is for running directly on the switch and remains unchanged.
+    # This section for on-box execution remains unchanged
     echo "Running in On-Box Mode."
     HOSTNAME=$(hostname)
     TARGET_VERSION="4.26.1F"

@@ -1,16 +1,15 @@
 #!/bin/bash
 
 # #############################################################################
-# Arista TAC Log Collection Script (v22)
+# Arista TAC Log Collection Script (v23)
 #
 # This script collects a support bundle from an Arista EOS device.
 # It can be run directly on the EOS device or remotely from a client machine.
 #
 # Changelog:
+# v23: Added FTP as an optional transfer protocol for the on-box mode.
 # v22: Fixed on-box transfer feature by correctly formatting the `copy`
 #      command and implementing interactive prompts for remote details.
-# v21: Added an option to transfer the log bundle to a remote host when
-#      running in on-box mode.
 #
 # #############################################################################
 
@@ -74,25 +73,45 @@ transfer_onbox_bundle() {
         return 0
     fi
 
-    # --- NEW: Interactive prompts for remote details ---
-    echo "Please provide remote host details..."
-    read -p "Protocol [scp]: " protocol
+    # --- NEW: Ask for protocol ---
+    read -p "Protocol to use for transfer [scp/ftp]: " protocol
     protocol=${protocol:-scp}
 
-    read -p "Remote host address: " remote_host
-    if [[ -z "$remote_host" ]]; then echo "Error: Remote host is required. Aborting transfer."; return 1; fi
-
-    read -p "Remote user [admin]: " remote_user
-    remote_user=${remote_user:-admin}
-
+    local remote_host
+    local remote_user
+    local remote_url
     local source_filename
     source_filename=$(basename "$local_file_path")
-    read -p "Remote path and filename [/tmp/${source_filename}]: " remote_full_path
-    remote_full_path=${remote_full_path:-/tmp/${source_filename}}
-    
-    # --- NEW: Build the correct EOS `copy` command ---
+
+    # --- NEW: Logic branches based on protocol ---
+    if [[ "$protocol" == "ftp" ]]; then
+        echo "FTP transfer selected."
+        read -p "FTP server address: " remote_host
+        if [[ -z "$remote_host" ]]; then echo "Error: FTP server address is required."; return 1; fi
+        
+        read -p "FTP user [anonymous]: " remote_user
+        remote_user=${remote_user:-anonymous}
+
+        read -p "FTP remote directory path (e.g., /support/): " remote_path
+        remote_url="ftp://${remote_user}@${remote_host}${remote_path}${source_filename}"
+
+    elif [[ "$protocol" == "scp" ]]; then
+        echo "SCP transfer selected."
+        read -p "Remote host address: " remote_host
+        if [[ -z "$remote_host" ]]; then echo "Error: Remote host is required."; return 1; fi
+        
+        read -p "Remote user [admin]: " remote_user
+        remote_user=${remote_user:-admin}
+
+        read -p "Remote path and filename [/tmp/${source_filename}]: " remote_full_path
+        remote_full_path=${remote_full_path:-/tmp/${source_filename}}
+        remote_url="scp://${remote_user}@${remote_host}:${remote_full_path}"
+    else
+        echo "Error: Unsupported protocol '${protocol}'. Aborting."
+        return 1
+    fi
+
     local eos_source_path=${local_file_path/^\/mnt\/flash\//flash:}
-    local remote_url="${protocol}://${remote_user}@${remote_host}:${remote_full_path}"
     local final_copy_cmd="copy ${eos_source_path} ${remote_url}"
 
     echo "The following command will be run:"

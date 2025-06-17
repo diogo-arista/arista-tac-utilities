@@ -1,16 +1,16 @@
 #!/bin/bash
 
 # #############################################################################
-# Arista TAC Log Collection Script (v17)
+# Arista TAC Log Collection Script (v19)
 #
 # This script collects a support bundle from an Arista EOS device.
 # It can be run directly on the EOS device or remotely from a client machine.
 #
 # Changelog:
-# v17: Final version. Re-enabled all log collection commands. Adjusted prompt
-#      text for clarity on remote host and decompression default action.
-# v16: Added debugging to the decompress_bundle function.
-# v15: Added an option to decompress the downloaded log bundle.
+# v19: Added default placeholder '0000' if no case number is provided, with
+#      a brief warning message to the user.
+# v18: Re-commented large log collection commands to facilitate testing.
+# v17: Final version with prompt text corrections and log collection re-enabled.
 #
 # #############################################################################
 
@@ -25,7 +25,7 @@ display_help() {
     echo ""
     echo "ARGUMENTS:"
     echo "  [CASE_NUMBER]    (Optional) The TAC case number. If not provided,"
-    echo "                   the script will prompt for it."
+    echo "                   a placeholder will be used."
     echo ""
     echo "OPTIONS:"
     echo "  -h, --help       Display this help message and exit."
@@ -85,7 +85,7 @@ fi
 
 # --- Main Script ---
 
-echo "--- Arista TAC Log Collection Script (v17) ---"
+echo "--- Arista TAC Log Collection Script (v19 - Testing Version) ---"
 
 # Determine run mode
 RUN_MODE="remote"
@@ -98,10 +98,11 @@ CASE_NUMBER="$1"
 if [[ -z "$CASE_NUMBER" ]]; then
     read -p "Please enter the TAC case number: " CASE_NUMBER
 fi
+
+# --- NEW: Handle empty case number with a default and a warning ---
 if [[ -z "$CASE_NUMBER" ]]; then
-    echo "Error: A TAC case number is required."
-    display_help
-    exit 1
+    CASE_NUMBER="0000"
+    echo "Warning: No case number provided. Using placeholder '${CASE_NUMBER}'. Using a real case number is highly recommended."
 fi
 echo "Using Case Number: $CASE_NUMBER"
 
@@ -200,14 +201,22 @@ EOF
         run_remote_bash_cmd "cd / && sudo tar --exclude lastlog -czvf /mnt/flash/${CASE_NUMBER}-${REMOTE_HOSTNAME}-var-log-${DATE_STAMP}.tar.gz var/log/"
         echo "Step 2/7: Collecting scheduled tech-support history..."
         run_remote_bash_cmd "cd /mnt/flash && sudo tar -cvf /mnt/flash/${CASE_NUMBER}-${REMOTE_HOSTNAME}-history-tech-${DATE_STAMP}.tar schedule/tech-support/"
-        echo "Step 3/7: Collecting debug folder..."
-        run_remote_bash_cmd "cd /mnt/flash && sudo tar -czvf /mnt/flash/${CASE_NUMBER}-${REMOTE_HOSTNAME}-debug-folder-${DATE_STAMP}.tar.gz debug/"
+        
+        echo "Step 3/7: Collecting debug folder... (SKIPPED FOR TESTING)"
+        ## FOR TESTING ## - To re-enable, remove the '#' from the line below
+        #run_remote_bash_cmd "cd /mnt/flash && sudo tar -czvf /mnt/flash/${CASE_NUMBER}-${REMOTE_HOSTNAME}-debug-folder-${DATE_STAMP}.tar.gz debug/"
+        
         echo "Step 4/7: Collecting Fossil folder..."
         run_remote_bash_cmd "cd /mnt/flash && sudo tar -czvf /mnt/flash/${CASE_NUMBER}-${REMOTE_HOSTNAME}-fossil-folder-${DATE_STAMP}.tar.gz Fossil/"
-        echo "Step 5/7: Collecting core files..."
-        run_remote_bash_cmd "cd /var/ && sudo tar --dereference -czvf /mnt/flash/${CASE_NUMBER}-${REMOTE_HOSTNAME}-var-core-${DATE_STAMP}.tar.gz core/"
-        echo "Step 6/7: Generating show tech-support..."
-        run_remote_bash_cmd "FastCli -p 15 -c 'show tech-support' | gzip > /mnt/flash/${CASE_NUMBER}-${REMOTE_HOSTNAME}-show-tech-${DATE_STAMP}.log.gz"
+        
+        echo "Step 5/7: Collecting core files... (SKIPPED FOR TESTING)"
+        ## FOR TESTING ## - To re-enable, remove the '#' from the line below
+        #run_remote_bash_cmd "cd /var/ && sudo tar --dereference -czvf /mnt/flash/${CASE_NUMBER}-${REMOTE_HOSTNAME}-var-core-${DATE_STAMP}.tar.gz core/"
+        
+        echo "Step 6/7: Generating show tech-support... (SKIPPED FOR TESTING)"
+        ## FOR TESTING ## - To re-enable, remove the '#' from the line below
+        #run_remote_bash_cmd "FastCli -p 15 -c 'show tech-support' | gzip > /mnt/flash/${CASE_NUMBER}-${REMOTE_HOSTNAME}-show-tech-${DATE_STAMP}.log.gz"
+        
         echo "Step 7/7: Bundling all collected files..."
         FINAL_BUNDLE_NAME="TAC-bundle-${CASE_NUMBER}-${REMOTE_HOSTNAME}-${DATETIME_STAMP}.tar"
         run_remote_bash_cmd "cd /mnt/flash && tar --remove-files -cf ${FINAL_BUNDLE_NAME} ${CASE_NUMBER}-*"
@@ -256,14 +265,22 @@ else
         bash -c "cd / && sudo tar --exclude lastlog -czvf /mnt/flash/${CASE_NUMBER}-${HOSTNAME}-var-log-${DATE_STAMP}.tar.gz var/log/"
         echo "Step 2/7: Collecting scheduled tech-support history..."
         bash -c "cd /mnt/flash && sudo tar -cvf /mnt/flash/${CASE_NUMBER}-${HOSTNAME}-history-tech-${DATE_STAMP}.tar schedule/tech-support/"
-        echo "Step 3/7: Collecting debug folder..."
-        bash -c "cd /mnt/flash && sudo tar -czvf /mnt/flash/${CASE_NUMBER}-${HOSTNAME}-debug-folder-${DATE_STAMP}.tar.gz debug/"
+        
+        echo "Step 3/7: Collecting debug folder... (SKIPPED FOR TESTING)"
+        ## FOR TESTING ## - To re-enable, remove the '#' from the line below
+        #bash -c "cd /mnt/flash && sudo tar -czvf /mnt/flash/${CASE_NUMBER}-${HOSTNAME}-debug-folder-${DATE_STAMP}.tar.gz debug/"
+        
         echo "Step 4/7: Collecting Fossil folder..."
         bash -c "cd /mnt/flash && sudo tar -czvf /mnt/flash/${CASE_NUMBER}-${HOSTNAME}-fossil-folder-${DATE_STAMP}.tar.gz Fossil/"
-        echo "Step 5/7: Collecting core files..."
-        bash -c "cd /var/ && sudo tar --dereference -czvf /mnt/flash/${CASE_NUMBER}-${HOSTNAME}-var-core-${DATE_STAMP}.tar.gz core/"
-        echo "Step 6/7: Generating show tech-support..."
-        FastCli -p 15 -c "show tech-support" | gzip > "/mnt/flash/${CASE_NUMBER}-${HOSTNAME}-show-tech-${DATE_STAMP}.log.gz"
+        
+        echo "Step 5/7: Collecting core files... (SKIPPED FOR TESTING)"
+        ## FOR TESTING ## - To re-enable, remove the '#' from the line below
+        #bash -c "cd /var/ && sudo tar --dereference -czvf /mnt/flash/${CASE_NUMBER}-${HOSTNAME}-var-core-${DATE_STAMP}.tar.gz core/"
+        
+        echo "Step 6/7: Generating show tech-support... (SKIPPED FOR TESTING)"
+        ## FOR TESTING ## - To re-enable, remove the '#' from the line below
+        #FastCli -p 15 -c "show tech-support" | gzip > "/mnt/flash/${CASE_NUMBER}-${HOSTNAME}-show-tech-${DATE_STAMP}.log.gz"
+        
         echo "Step 7/7: Bundling all collected files..."
         bash -c "cd /mnt/flash && tar --remove-files -cf ${FINAL_BUNDLE} ${CASE_NUMBER}-*"
 

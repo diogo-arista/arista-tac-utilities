@@ -1,15 +1,15 @@
 #!/bin/bash
 
 # #############################################################################
-# Arista TAC Log Collection Script (v6)
+# Arista TAC Log Collection Script (v7)
 #
 # This script collects a support bundle from an Arista EOS device.
-# It can be run directly on the EOS device or remotely from a client machine
-# (Linux, macOS, Windows WSL).
+# It can be run directly on the EOS device or remotely from a client machine.
 #
 # Changelog:
-# v6: Added remote execution capability using SSH Connection Sharing. No new
-#     dependencies are required. Script now detects if it's on EOS or a client.
+# v7: Fixed remote execution by ensuring commands are run in 'bash' on the
+#     remote device, not the default EOS CLI shell.
+# v6: Added remote execution capability using SSH Connection Sharing.
 # v5: Added -h/--help option and ability to pass case number as an argument.
 #
 # #############################################################################
@@ -46,7 +46,7 @@ fi
 
 # --- Main Script ---
 
-echo "--- Arista TAC Log Collection Script (v6) ---"
+echo "--- Arista TAC Log Collection Script (v7) ---"
 
 # Determine run mode: "on-box" or "remote"
 RUN_MODE="remote"
@@ -86,8 +86,6 @@ if [[ "$RUN_MODE" == "remote" ]]; then
     echo "Establishing master SSH connection to ${REMOTE_HOST}..."
     echo "You will be prompted for the password once."
 
-    # Establish the master connection in the background, prompting for a password once.
-    # It will persist for 120 seconds of inactivity.
     ssh -o ControlMaster=auto -o ControlPath="$CONTROL_PATH" -o ControlPersist=120s -Nf "${REMOTE_USER}@${REMOTE_HOST}"
     SSH_STATUS=$?
 
@@ -96,7 +94,6 @@ if [[ "$RUN_MODE" == "remote" ]]; then
         exit $SSH_STATUS
     fi
 
-    # Ensure we clean up the connection when the script exits
     function cleanup {
         echo "Closing master SSH connection..."
         ssh -o ControlPath="$CONTROL_PATH" -O exit "${REMOTE_USER}@${REMOTE_HOST}" 2>/dev/null
@@ -105,7 +102,9 @@ if [[ "$RUN_MODE" == "remote" ]]; then
 
     # Helper functions for remote operations
     run_remote_cmd() {
-        ssh -o ControlPath="$CONTROL_PATH" "${REMOTE_USER}@${REMOTE_HOST}" "$@"
+        # ** THE FIX IS HERE **
+        # This now wraps the command in 'bash -c' to run it in the correct remote shell.
+        ssh -o ControlPath="$CONTROL_PATH" "${REMOTE_USER}@${REMOTE_HOST}" bash -c "'$@'"
     }
     scp_remote_file() {
         scp -o ControlPath="$CONTROL_PATH" "${REMOTE_USER}@${REMOTE_HOST}:$1" "$2"
@@ -114,8 +113,7 @@ if [[ "$RUN_MODE" == "remote" ]]; then
     # --- Start remote log collection ---
     echo "Checking remote EOS version..."
     REMOTE_HOSTNAME=$(run_remote_cmd "hostname")
-    # Note the escaped dollar sign in awk for remote execution
-    REMOTE_EOS_VERSION=$(run_remote_cmd 'FastCli -p 15 -c "show version" | grep "Software image version" | awk "{print \$4}"')
+    REMOTE_EOS_VERSION=$(run_remote_cmd "FastCli -p 15 -c 'show version' | grep 'Software image version' | awk '{print \$4}'")
     
     if [[ -z "$REMOTE_EOS_VERSION" ]]; then
         echo "Error: Could not determine remote EOS version. Exiting."
@@ -133,10 +131,9 @@ if [[ "$RUN_MODE" == "remote" ]]; then
             DESTINATION_URL="flash:/"
         fi
 
-        run_remote_cmd "FastCli -p 15 -c 'send support-bundle ${DESTINATION_URL} case-number ${CASE_NUMBER}'"
+        run_remote_cmd "FastCli -p 15 -c \"send support-bundle ${DESTINATION_URL} case-number ${CASE_NUMBER}\""
         
         echo "Finding generated bundle on remote device..."
-        # This is a best-effort guess at the filename.
         BUNDLE_PATH=$(run_remote_cmd "ls -t /mnt/flash/support-bundle-SR${CASE_NUMBER}-* 2>/dev/null | head -1")
 
         if [[ -z "$BUNDLE_PATH" ]]; then
@@ -146,14 +143,14 @@ if [[ "$RUN_MODE" == "remote" ]]; then
 
         echo "Downloading ${BUNDLE_PATH} to your local machine..."
         scp_remote_file "${BUNDLE_PATH}" "."
-        echo -e "\n-----------\n\nCompleted. Bundle downloaded to your current directory: $(basename ${BUNDLE_PATH})\n"
+        BUNDLE_FILENAME=$(basename "${BUNDLE_PATH}")
+        echo -e "\n-----------\n\nCompleted. Bundle downloaded to your current directory: ${BUNDLE_FILENAME}\n"
 
     else
         echo "Running on an older EOS version. Manually collecting logs remotely..."
         DATE_STAMP=$(run_remote_cmd "date +%m_%d.%H%M")
-        DATETIME_STAMP=$(run_remote_cmd "date \"+%F--%H%M\"")
+        DATETIME_STAMP=$(run_remote_cmd "date '+%F--%H%M'")
 
-        # Execute all commands remotely
         echo "Step 1/7: Collecting /var/log/..."
         run_remote_cmd "cd / && sudo tar --exclude lastlog -czvf /mnt/flash/${CASE_NUMBER}-${REMOTE_HOSTNAME}-var-log-${DATE_STAMP}.tar.gz var/log/"
         echo "Step 2/7: Collecting scheduled tech-support history..."
@@ -180,6 +177,7 @@ if [[ "$RUN_MODE" == "remote" ]]; then
 # --- ON-BOX EXECUTION MODE ---
 # ==============================================================================
 else
+    # This section is for running directly on the switch and remains unchanged.
     echo "Running in On-Box Mode."
     HOSTNAME=$(hostname)
     TARGET_VERSION="4.26.1F"
@@ -202,11 +200,15 @@ else
         
         echo "Step 1/7: Collecting /var/log/..."
         bash -c "cd / && sudo tar --exclude lastlog -czvf /mnt/flash/${CASE_NUMBER}-${HOSTNAME}-var-log-${DATE_STAMP}.tar.gz var/log/" &> /dev/null
-        echo "Step 2/7: ..." # Other steps follow
+        echo "Step 2/7: Collecting scheduled tech-support history..."
         bash -c "cd /mnt/flash && sudo tar -cvf /mnt/flash/${CASE_NUMBER}-${HOSTNAME}-history-tech-${DATE_STAMP}.tar schedule/tech-support/" &> /dev/null
+        echo "Step 3/7: Collecting debug folder..."
         bash -c "cd /mnt/flash && sudo tar -czvf /mnt/flash/${CASE_NUMBER}-${HOSTNAME}-debug-folder-${DATE_STAMP}.tar.gz debug/" &> /dev/null
+        echo "Step 4/7: Collecting Fossil folder..."
         bash -c "cd /mnt/flash && sudo tar -czvf /mnt/flash/${CASE_NUMBER}-${HOSTNAME}-fossil-folder-${DATE_STAMP}.tar.gz Fossil/" &> /dev/null
+        echo "Step 5/7: Collecting core files..."
         bash -c "cd /var/ && sudo tar --dereference -czvf /mnt/flash/${CASE_NUMBER}-${HOSTNAME}-var-core-${DATE_STAMP}.tar.gz core/" &> /dev/null
+        echo "Step 6/7: Generating show tech-support..."
         FastCli -p 15 -c "show tech-support" | gzip > "/mnt/flash/${CASE_NUMBER}-${HOSTNAME}-show-tech-${DATE_STAMP}.log.gz"
         echo "Step 7/7: Bundling all collected files..."
         bash -c "cd /mnt/flash && tar --remove-files -cf ${FINAL_BUNDLE} ${CASE_NUMBER}-*" &> /dev/null

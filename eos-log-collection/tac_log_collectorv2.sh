@@ -1,11 +1,15 @@
 #!/bin/bash
 
 # #############################################################################
-# Arista TAC Log Collection Script (Production v1.0)
+# Arista TAC Log Collection Script (v21)
 #
 # This script collects a support bundle from an Arista EOS device.
-# It can be run directly on the EOS device or remotely from a client machine
-# (Linux, macOS, Windows WSL).
+# It can be run directly on the EOS device or remotely from a client machine.
+#
+# Changelog:
+# v21: Added an option to transfer the log bundle to a remote host when
+#      running in on-box mode on older EOS versions.
+# v17-v20: Final production version with all features and fixes.
 #
 # #############################################################################
 
@@ -70,6 +74,40 @@ decompress_bundle() {
     fi
 }
 
+transfer_onbox_bundle() {
+    local local_file_path="$1"
+
+    if [[ ! -f "$local_file_path" ]]; then
+        echo "Error: Source bundle file not found at ${local_file_path}."
+        return 1
+    fi
+
+    read -p "Would you like to transfer this bundle to a remote host? [y/N]: " transfer_choice
+    if [[ ! "$transfer_choice" =~ ^[Yy]$ ]]; then
+        echo -e "\n-----------\n\nCompleted. Please download the bundle from the switch at: \n\n ${local_file_path} \n"
+        return 0
+    fi
+
+    echo "Please provide the full remote URL (e.g., scp://user@host/path/)."
+    read -p "Remote URL: " remote_url
+
+    if [[ -z "$remote_url" ]]; then
+        echo "No URL provided. Aborting transfer."
+        echo -e "\n-----------\n\nCompleted. Please download the bundle from the switch at: \n\n ${local_file_path} \n"
+        return 1
+    fi
+
+    echo "Transferring ${local_file_path} to ${remote_url}..."
+    FastCli -p 15 -c "copy ${local_file_path} ${remote_url}"
+
+    if [[ $? -eq 0 ]]; then
+        echo "Transfer successful."
+    else
+        echo "Error: Transfer failed. Please check the URL, credentials, and network connectivity."
+        echo "The file is still available on the switch at ${local_file_path}"
+    fi
+}
+
 
 # --- Argument Parsing ---
 
@@ -106,7 +144,6 @@ if [[ "$RUN_MODE" == "remote" ]]; then
     echo "Running in Remote Mode."
 
     read -p "Enter target Arista device address: " REMOTE_HOST
-    
     read -p "Enter username for ${REMOTE_HOST} [default: admin]: " temp_user
     REMOTE_USER=${temp_user:-admin}
 
@@ -235,10 +272,12 @@ else
     if version_ge "$EOS_VERSION" "$TARGET_VERSION";
     then
         echo "Running on a modern EOS version. Using 'send support-bundle'..."
-        read -p "Enter destination URL [default: flash:/]: " DESTINATION_URL
+        # --- MODIFIED: Prompt now clarifies remote URL is an option ---
+        read -p "Enter destination URL (e.g., flash:/ or scp://user@host/path) [default: flash:/]: " DESTINATION_URL
         if [[ -z "$DESTINATION_URL" ]]; then DESTINATION_URL="flash:/"; fi
+        
         FastCli -p 15 -c "send support-bundle ${DESTINATION_URL} case-number ${CASE_NUMBER}"
-        echo -e "\n-----------\n\nCompleted. Bundle created on device at ${DESTINATION_URL}\n"
+        echo -e "\n-----------\n\nCompleted. Bundle operation finished.\n"
     else
         echo "Running on an older EOS version. Manually collecting logs..."
         DATE_STAMP=$(date +%m_%d.%H%M)
@@ -260,7 +299,8 @@ else
         echo "Step 7/7: Bundling all collected files..."
         bash -c "cd /mnt/flash && tar --remove-files -cf ${FINAL_BUNDLE} ${CASE_NUMBER}-*"
 
-        echo -e "\n-----------\n\nCompleted. Please find your bundle on the switch at: \n\n ${FINAL_BUNDLE} \n"
+        # --- NEW: Call the transfer function at the end of the legacy on-box workflow ---
+        transfer_onbox_bundle "$FINAL_BUNDLE"
     fi
 fi
 

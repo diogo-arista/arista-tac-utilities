@@ -1,16 +1,17 @@
 #!/bin/bash
 
 # #############################################################################
-# Arista TAC Log Collection Script (v10)
+# Arista TAC Log Collection Script (v11)
 #
 # This script collects a support bundle from an Arista EOS device.
 # It can be run directly on the EOS device or remotely from a client machine.
 #
 # Changelog:
-# v10: Added an interactive prompt to make the final download optional when
-#      running in remote mode.
+# v11: Removed optional download prompt. Now downloads automatically and provides
+#      a clear final summary with remote and local file paths.
+# v10: Added an interactive prompt for optional download.
 # v9:  Complete rewrite of remote execution logic based on successful user
-#      testing. Uses a hybrid approach for remote commands.
+#      testing.
 #
 # #############################################################################
 
@@ -44,7 +45,7 @@ fi
 
 # --- Main Script ---
 
-echo "--- Arista TAC Log Collection Script (v10) ---"
+echo "--- Arista TAC Log Collection Script (v11) ---"
 
 # Determine run mode
 RUN_MODE="remote"
@@ -133,24 +134,25 @@ EOF
         
         echo "Finding generated bundle on remote device..."
         BUNDLE_PATH=$(run_remote_bash_cmd "ls -t /mnt/flash/support-bundle-SR${CASE_NUMBER}-* 2>/dev/null | head -1")
-        BUNDLE_FILENAME=$(basename "${BUNDLE_PATH}")
-
+        
         if [[ -z "$BUNDLE_PATH" ]]; then
-             echo "Warning: Could not automatically find the bundle. Please check 'flash:' on the remote device."
+             echo "Warning: Could not automatically find the bundle. Please check '${DESTINATION_URL}' on the remote device."
              exit 0
         fi
-
-        # --- NEW: Optional Download Logic ---
-        echo ""
-        echo "Log bundle '${BUNDLE_FILENAME}' is ready on the remote device."
-        read -p "Would you like to download it to your current directory now? (y/n): " DOWNLOAD_CHOICE
-        if [[ "$DOWNLOAD_CHOICE" =~ ^[Yy]$ ]]; then
-            echo "Downloading ${BUNDLE_PATH} to your local machine..."
-            scp_remote_file "${BUNDLE_PATH}" "."
-            echo -e "\n-----------\n\nCompleted. Bundle downloaded to your current directory: ${BUNDLE_FILENAME}\n"
-        else
-            echo -e "\n-----------\n\nCompleted. You can download the bundle later from the switch at: ${BUNDLE_PATH}\n"
-        fi
+        
+        BUNDLE_FILENAME=$(basename "${BUNDLE_PATH}")
+        echo "Downloading bundle from remote device..."
+        scp_remote_file "${BUNDLE_PATH}" "."
+        
+        # --- NEW: Clearer final message ---
+        echo -e "\n------------------------------------------------------------"
+        echo -e "SUCCESS!"
+        echo -e "\nLog bundle created on remote device:"
+        echo -e "  ${REMOTE_HOST}:${BUNDLE_PATH}"
+        echo -e "\nBundle automatically downloaded to your local machine:"
+        echo -e "  --> ./${BUNDLE_FILENAME}"
+        echo -e "\nPlease attach this local file to your support case."
+        echo -e "------------------------------------------------------------\n"
 
     else
         echo "Running on an older EOS version. Manually collecting logs remotely..."
@@ -159,33 +161,33 @@ EOF
 
         echo "Step 1/7: Collecting /var/log/..."
         run_remote_bash_cmd "cd / && sudo tar --exclude lastlog -czvf /mnt/flash/${CASE_NUMBER}-${REMOTE_HOSTNAME}-var-log-${DATE_STAMP}.tar.gz var/log/"
-#        echo "Step 2/7: Collecting scheduled tech-support history..."
-#        run_remote_bash_cmd "cd /mnt/flash && sudo tar -cvf /mnt/flash/${CASE_NUMBER}-${REMOTE_HOSTNAME}-history-tech-${DATE_STAMP}.tar schedule/tech-support/"
-#        echo "Step 3/7: Collecting debug folder..."
-#        run_remote_bash_cmd "cd /mnt/flash && sudo tar -czvf /mnt/flash/${CASE_NUMBER}-${REMOTE_HOSTNAME}-debug-folder-${DATE_STAMP}.tar.gz debug/"
-#        echo "Step 4/7: Collecting Fossil folder..."
-#        run_remote_bash_cmd "cd /mnt/flash && sudo tar -czvf /mnt/flash/${CASE_NUMBER}-${REMOTE_HOSTNAME}-fossil-folder-${DATE_STAMP}.tar.gz Fossil/"
-#        echo "Step 5/7: Collecting core files..."
-#        run_remote_bash_cmd "cd /var/ && sudo tar --dereference -czvf /mnt/flash/${CASE_NUMBER}-${REMOTE_HOSTNAME}-var-core-${DATE_STAMP}.tar.gz core/"
-#        echo "Step 6/7: Generating show tech-support..."
-#        run_remote_bash_cmd "FastCli -p 15 -c 'show tech-support' | gzip > /mnt/flash/${CASE_NUMBER}-${REMOTE_HOSTNAME}-show-tech-${DATE_STAMP}.log.gz"
+        echo "Step 2/7: Collecting scheduled tech-support history..."
+        run_remote_bash_cmd "cd /mnt/flash && sudo tar -cvf /mnt/flash/${CASE_NUMBER}-${REMOTE_HOSTNAME}-history-tech-${DATE_STAMP}.tar schedule/tech-support/"
+        echo "Step 3/7: Collecting debug folder..."
+        run_remote_bash_cmd "cd /mnt/flash && sudo tar -czvf /mnt/flash/${CASE_NUMBER}-${REMOTE_HOSTNAME}-debug-folder-${DATE_STAMP}.tar.gz debug/"
+        echo "Step 4/7: Collecting Fossil folder..."
+        run_remote_bash_cmd "cd /mnt/flash && sudo tar -czvf /mnt/flash/${CASE_NUMBER}-${REMOTE_HOSTNAME}-fossil-folder-${DATE_STAMP}.tar.gz Fossil/"
+        echo "Step 5/7: Collecting core files..."
+        run_remote_bash_cmd "cd /var/ && sudo tar --dereference -czvf /mnt/flash/${CASE_NUMBER}-${REMOTE_HOSTNAME}-var-core-${DATE_STAMP}.tar.gz core/"
+        echo "Step 6/7: Generating show tech-support..."
+        run_remote_bash_cmd "FastCli -p 15 -c 'show tech-support' | gzip > /mnt/flash/${CASE_NUMBER}-${REMOTE_HOSTNAME}-show-tech-${DATE_STAMP}.log.gz"
         echo "Step 7/7: Bundling all collected files..."
         FINAL_BUNDLE_NAME="TAC-bundle-${CASE_NUMBER}-${REMOTE_HOSTNAME}-${DATETIME_STAMP}.tar"
         run_remote_bash_cmd "cd /mnt/flash && tar --remove-files -cf ${FINAL_BUNDLE_NAME} ${CASE_NUMBER}-*"
         
         BUNDLE_PATH="/mnt/flash/${FINAL_BUNDLE_NAME}"
-        
-        # --- NEW: Optional Download Logic ---
-        echo ""
-        echo "Log bundle '${FINAL_BUNDLE_NAME}' is ready on the remote device."
-        read -p "Would you like to download it to your current directory now? (y/n): " DOWNLOAD_CHOICE
-        if [[ "$DOWNLOAD_CHOICE" =~ ^[Yy]$ ]]; then
-            echo "Downloading ${BUNDLE_PATH} to your local machine..."
-            scp_remote_file "${BUNDLE_PATH}" "."
-            echo -e "\n-----------\n\nCompleted. Bundle downloaded to your current directory: ${FINAL_BUNDLE_NAME}\n"
-        else
-            echo -e "\n-----------\n\nCompleted. You can download the bundle later from the switch at: ${BUNDLE_PATH}\n"
-        fi
+        echo "Downloading bundle from remote device..."
+        scp_remote_file "${BUNDLE_PATH}" "."
+
+        # --- NEW: Clearer final message ---
+        echo -e "\n------------------------------------------------------------"
+        echo -e "SUCCESS!"
+        echo -e "\nLog bundle created on remote device:"
+        echo -e "  ${REMOTE_HOST}:${BUNDLE_PATH}"
+        echo -e "\nBundle automatically downloaded to your local machine:"
+        echo -e "  --> ./${FINAL_BUNDLE_NAME}"
+        echo -e "\nPlease attach this local file to your support case."
+        echo -e "------------------------------------------------------------\n"
     fi
 
 # ==============================================================================
@@ -199,7 +201,8 @@ else
     EOS_VERSION=$(FastCli -p 15 -c "show version" | grep "Software image version" | awk '{print $4}')
     echo "Detected EOS version: $EOS_VERSION"
 
-    if version_ge "$EOS_VERSION" "$TARGET_VERSION"; then
+    if version_ge "$EOS_VERSION" "$TARGET_VERSION";
+    then
         echo "Running on a modern EOS version. Using 'send support-bundle'..."
         read -p "Enter destination URL [default: flash:/]: " DESTINATION_URL
         if [[ -z "$DESTINATION_URL" ]]; then

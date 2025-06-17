@@ -1,14 +1,15 @@
 #!/bin/bash
 
 # #############################################################################
-# Arista TAC Log Collection Script (v16)
+# Arista TAC Log Collection Script (v17)
 #
 # This script collects a support bundle from an Arista EOS device.
 # It can be run directly on the EOS device or remotely from a client machine.
 #
 # Changelog:
-# v16: Added debugging to the decompress_bundle function to diagnose why the
-#      prompt is not appearing.
+# v17: Final version. Re-enabled all log collection commands. Adjusted prompt
+#      text for clarity on remote host and decompression default action.
+# v16: Added debugging to the decompress_bundle function.
 # v15: Added an option to decompress the downloaded log bundle.
 #
 # #############################################################################
@@ -36,19 +37,11 @@ version_ge() {
 
 decompress_bundle() {
     local local_bundle_path="$1"
-    
-    # --- NEW: Debugging lines ---
-    echo "DEBUG: Entered decompress_bundle function."
-    echo "DEBUG: Checking for local file at path: '${local_bundle_path}'"
 
     if [[ ! -f "$local_bundle_path" ]]; then
-        echo "DEBUG: File check failed. The file does not exist or is not a regular file."
         echo "Warning: Cannot find downloaded bundle at '${local_bundle_path}' to decompress."
         return 1
     fi
-    
-    echo "DEBUG: File check passed. Proceeding to prompt."
-    # --- End Debugging lines ---
 
     local local_dir
     local bundle_filename
@@ -64,7 +57,7 @@ decompress_bundle() {
 
     decompression_path="${local_dir}/${subfolder_name}"
 
-    read -p "Would you like to decompress the bundle into './${decompression_path}/'? (y/n): " decompress_choice
+    read -p "Would you like to decompress the bundle into './${decompression_path}/'? [y/N]: " decompress_choice
 
     if [[ "$decompress_choice" =~ ^[Yy]$ ]]; then
         echo "Decompressing bundle..."
@@ -92,7 +85,7 @@ fi
 
 # --- Main Script ---
 
-echo "--- Arista TAC Log Collection Script (v16 - Debug Version) ---"
+echo "--- Arista TAC Log Collection Script (v17) ---"
 
 # Determine run mode
 RUN_MODE="remote"
@@ -118,7 +111,7 @@ echo "Using Case Number: $CASE_NUMBER"
 if [[ "$RUN_MODE" == "remote" ]]; then
     echo "Running in Remote Mode."
 
-    read -p "Enter target EOS device address: " REMOTE_HOST
+    read -p "Enter target Arista device address: " REMOTE_HOST
     
     read -p "Enter username for ${REMOTE_HOST} [default: admin]: " temp_user
     REMOTE_USER=${temp_user:-admin}
@@ -202,21 +195,19 @@ EOF
         echo "Running on an older EOS version. Manually collecting logs remotely..."
         DATE_STAMP=$(run_remote_bash_cmd "date +%m_%d.%H%M")
         DATETIME_STAMP=$(run_remote_bash_cmd "date '+%F--%H%M'")
-        
-        # FOR TESTING: Disable large file collection
+
         echo "Step 1/7: Collecting /var/log/..."
         run_remote_bash_cmd "cd / && sudo tar --exclude lastlog -czvf /mnt/flash/${CASE_NUMBER}-${REMOTE_HOSTNAME}-var-log-${DATE_STAMP}.tar.gz var/log/"
         echo "Step 2/7: Collecting scheduled tech-support history..."
         run_remote_bash_cmd "cd /mnt/flash && sudo tar -cvf /mnt/flash/${CASE_NUMBER}-${REMOTE_HOSTNAME}-history-tech-${DATE_STAMP}.tar schedule/tech-support/"
-        echo "Step 3/7: Collecting debug folder... (SKIPPED FOR TESTING)"
-        #run_remote_bash_cmd "cd /mnt/flash && sudo tar -czvf /mnt/flash/${CASE_NUMBER}-${REMOTE_HOSTNAME}-debug-folder-${DATE_STAMP}.tar.gz debug/"
+        echo "Step 3/7: Collecting debug folder..."
+        run_remote_bash_cmd "cd /mnt/flash && sudo tar -czvf /mnt/flash/${CASE_NUMBER}-${REMOTE_HOSTNAME}-debug-folder-${DATE_STAMP}.tar.gz debug/"
         echo "Step 4/7: Collecting Fossil folder..."
         run_remote_bash_cmd "cd /mnt/flash && sudo tar -czvf /mnt/flash/${CASE_NUMBER}-${REMOTE_HOSTNAME}-fossil-folder-${DATE_STAMP}.tar.gz Fossil/"
-        echo "Step 5/7: Collecting core files... (SKIPPED FOR TESTING)"
-        #run_remote_bash_cmd "cd /var/ && sudo tar --dereference -czvf /mnt/flash/${CASE_NUMBER}-${REMOTE_HOSTNAME}-var-core-${DATE_STAMP}.tar.gz core/"
-        echo "Step 6/7: Generating show tech-support... (SKIPPED FOR TESTING)"
-        #run_remote_bash_cmd "FastCli -p 15 -c 'show tech-support' | gzip > /mnt/flash/${CASE_NUMBER}-${REMOTE_HOSTNAME}-show-tech-${DATE_STAMP}.log.gz"
-        
+        echo "Step 5/7: Collecting core files..."
+        run_remote_bash_cmd "cd /var/ && sudo tar --dereference -czvf /mnt/flash/${CASE_NUMBER}-${REMOTE_HOSTNAME}-var-core-${DATE_STAMP}.tar.gz core/"
+        echo "Step 6/7: Generating show tech-support..."
+        run_remote_bash_cmd "FastCli -p 15 -c 'show tech-support' | gzip > /mnt/flash/${CASE_NUMBER}-${REMOTE_HOSTNAME}-show-tech-${DATE_STAMP}.log.gz"
         echo "Step 7/7: Bundling all collected files..."
         FINAL_BUNDLE_NAME="TAC-bundle-${CASE_NUMBER}-${REMOTE_HOSTNAME}-${DATETIME_STAMP}.tar"
         run_remote_bash_cmd "cd /mnt/flash && tar --remove-files -cf ${FINAL_BUNDLE_NAME} ${CASE_NUMBER}-*"
@@ -241,7 +232,7 @@ EOF
 # --- ON-BOX EXECUTION MODE ---
 # ==============================================================================
 else
-    # This section for on-box execution remains unchanged
+    # This section for on-box execution remains unchanged.
     echo "Running in On-Box Mode."
     HOSTNAME=$(hostname)
     TARGET_VERSION="4.26.1F"
@@ -265,22 +256,14 @@ else
         bash -c "cd / && sudo tar --exclude lastlog -czvf /mnt/flash/${CASE_NUMBER}-${HOSTNAME}-var-log-${DATE_STAMP}.tar.gz var/log/" &> /dev/null
         echo "Step 2/7: Collecting scheduled tech-support history..."
         bash -c "cd /mnt/flash && sudo tar -cvf /mnt/flash/${CASE_NUMBER}-${HOSTNAME}-history-tech-${DATE_STAMP}.tar schedule/tech-support/" &> /dev/null
-        
-        ## FOR TESTING ##
-        echo "Step 3/7: Collecting debug folder... (SKIPPED FOR TESTING)"
-        #bash -c "cd /mnt/flash && sudo tar -czvf /mnt/flash/${CASE_NUMBER}-${HOSTNAME}-debug-folder-${DATE_STAMP}.tar.gz debug/" &> /dev/null
-        
+        echo "Step 3/7: Collecting debug folder..."
+        bash -c "cd /mnt/flash && sudo tar -czvf /mnt/flash/${CASE_NUMBER}-${HOSTNAME}-debug-folder-${DATE_STAMP}.tar.gz debug/" &> /dev/null
         echo "Step 4/7: Collecting Fossil folder..."
         bash -c "cd /mnt/flash && sudo tar -czvf /mnt/flash/${CASE_NUMBER}-${HOSTNAME}-fossil-folder-${DATE_STAMP}.tar.gz Fossil/" &> /dev/null
-        
-        ## FOR TESTING ##
-        echo "Step 5/7: Collecting core files... (SKIPPED FOR TESTING)"
-        #bash -c "cd /var/ && sudo tar --dereference -czvf /mnt/flash/${CASE_NUMBER}-${HOSTNAME}-var-core-${DATE_STAMP}.tar.gz core/" &> /dev/null
-        
-        ## FOR TESTING ##
-        echo "Step 6/7: Generating show tech-support... (SKIPPED FOR TESTING)"
-        #FastCli -p 15 -c "show tech-support" | gzip > "/mnt/flash/${CASE_NUMBER}-${HOSTNAME}-show-tech-${DATE_STAMP}.log.gz"
-        
+        echo "Step 5/7: Collecting core files..."
+        bash -c "cd /var/ && sudo tar --dereference -czvf /mnt/flash/${CASE_NUMBER}-${HOSTNAME}-var-core-${DATE_STAMP}.tar.gz core/" &> /dev/null
+        echo "Step 6/7: Generating show tech-support..."
+        FastCli -p 15 -c "show tech-support" | gzip > "/mnt/flash/${CASE_NUMBER}-${HOSTNAME}-show-tech-${DATE_STAMP}.log.gz"
         echo "Step 7/7: Bundling all collected files..."
         bash -c "cd /mnt/flash && tar --remove-files -cf ${FINAL_BUNDLE} ${CASE_NUMBER}-*" &> /dev/null
 

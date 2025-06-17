@@ -1,16 +1,16 @@
 #!/bin/bash
 
 # #############################################################################
-# Arista TAC Log Collection Script (v7)
+# Arista TAC Log Collection Script (v8)
 #
 # This script collects a support bundle from an Arista EOS device.
 # It can be run directly on the EOS device or remotely from a client machine.
 #
 # Changelog:
-# v7: Fixed remote execution by ensuring commands are run in 'bash' on the
-#     remote device, not the default EOS CLI shell.
+# v8: Corrected remote execution quoting issue using a robust 'Here Document'
+#     method instead of nested quotes with 'bash -c'.
+# v7: Attempted to fix remote shell issue.
 # v6: Added remote execution capability using SSH Connection Sharing.
-# v5: Added -h/--help option and ability to pass case number as an argument.
 #
 # #############################################################################
 
@@ -46,7 +46,7 @@ fi
 
 # --- Main Script ---
 
-echo "--- Arista TAC Log Collection Script (v7) ---"
+echo "--- Arista TAC Log Collection Script (v8) ---"
 
 # Determine run mode: "on-box" or "remote"
 RUN_MODE="remote"
@@ -103,8 +103,11 @@ if [[ "$RUN_MODE" == "remote" ]]; then
     # Helper functions for remote operations
     run_remote_cmd() {
         # ** THE FIX IS HERE **
-        # This now wraps the command in 'bash -c' to run it in the correct remote shell.
-        ssh -o ControlPath="$CONTROL_PATH" "${REMOTE_USER}@${REMOTE_HOST}" bash -c "'$@'"
+        # This uses a Here Document to send the command to the remote bash shell.
+        # This is robust and avoids all nested quoting issues.
+        ssh -o ControlPath="$CONTROL_PATH" "${REMOTE_USER}@${REMOTE_HOST}" bash << EOF
+$@
+EOF
     }
     scp_remote_file() {
         scp -o ControlPath="$CONTROL_PATH" "${REMOTE_USER}@${REMOTE_HOST}:$1" "$2"
@@ -113,6 +116,7 @@ if [[ "$RUN_MODE" == "remote" ]]; then
     # --- Start remote log collection ---
     echo "Checking remote EOS version..."
     REMOTE_HOSTNAME=$(run_remote_cmd "hostname")
+    # Note: Escaping the $ in awk is no longer necessary with the heredoc method.
     REMOTE_EOS_VERSION=$(run_remote_cmd "FastCli -p 15 -c 'show version' | grep 'Software image version' | awk '{print \$4}'")
     
     if [[ -z "$REMOTE_EOS_VERSION" ]]; then

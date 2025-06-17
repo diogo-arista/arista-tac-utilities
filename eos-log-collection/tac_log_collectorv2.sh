@@ -1,17 +1,17 @@
 #!/bin/bash
 
 # #############################################################################
-# Arista TAC Log Collection Script (v14)
+# Arista TAC Log Collection Script (v15)
 #
 # This script collects a support bundle from an Arista EOS device.
 # It can be run directly on the EOS device or remotely from a client machine.
 #
 # Changelog:
+# v15: Added an option to decompress the downloaded log bundle into a subfolder
+#      for immediate analysis.
 # v14: FOR TESTING - Commented out large log collection (debug, cores, show-tech)
 #      in the legacy EOS mode to speed up testing cycles.
 # v13: Added logic to create a date-stamped folder for local log storage.
-# v12: Set 'admin' as the default username for remote connections.
-# v11: Removed optional download prompt for clearer, automated workflow.
 #
 # #############################################################################
 
@@ -36,6 +36,49 @@ version_ge() {
     test "$(printf '%s\n' "$1" "$2" | sort -V | head -n 1)" = "$2"
 }
 
+decompress_bundle() {
+    local local_bundle_path="$1"
+
+    if [[ ! -f "$local_bundle_path" ]]; then
+        echo "Warning: Cannot find downloaded bundle at '${local_bundle_path}' to decompress."
+        return 1
+    fi
+
+    local local_dir
+    local bundle_filename
+    local subfolder_name
+    local decompression_path
+
+    local_dir=$(dirname "$local_bundle_path")
+    bundle_filename=$(basename "$local_bundle_path")
+    
+    # Create a clean subfolder name by removing archive extensions
+    subfolder_name="${bundle_filename%.zip}"
+    subfolder_name="${subfolder_name%.tar}"
+    subfolder_name="${subfolder_name%.tar.gz}"
+
+    decompression_path="${local_dir}/${subfolder_name}"
+
+    read -p "Would you like to decompress the bundle into './${decompression_path}/'? (y/n): " decompress_choice
+
+    if [[ "$decompress_choice" =~ ^[Yy]$ ]]; then
+        echo "Decompressing bundle..."
+        mkdir -p "$decompression_path"
+
+        # Handle different archive types
+        if [[ "$bundle_filename" == *.zip ]]; then
+            unzip -q "$local_bundle_path" -d "$decompression_path"
+            echo "Successfully decompressed to: ${decompression_path}"
+        elif [[ "$bundle_filename" == *.tar* ]]; then
+            tar -xf "$local_bundle_path" -C "$decompression_path"
+            echo "Successfully decompressed to: ${decompression_path}"
+        else
+            echo "Unsupported file type: cannot decompress '${bundle_filename}'."
+        fi
+    fi
+}
+
+
 # --- Argument Parsing ---
 
 if [[ "$1" == "-h" || "$1" == "--help" ]]; then
@@ -45,7 +88,7 @@ fi
 
 # --- Main Script ---
 
-echo "--- Arista TAC Log Collection Script (v14 - Testing Version) ---"
+echo "--- Arista TAC Log Collection Script (v15 - Testing Version) ---"
 
 # Determine run mode
 RUN_MODE="remote"
@@ -148,6 +191,9 @@ EOF
         echo -e "  --> ./${LOCAL_DATE_FOLDER}/${BUNDLE_FILENAME}"
         echo -e "\nPlease attach this local file to your support case."
         echo -e "------------------------------------------------------------\n"
+        
+        # --- NEW: Call decompression function ---
+        decompress_bundle "./${LOCAL_DATE_FOLDER}/${BUNDLE_FILENAME}"
 
     else
         echo "Running on an older EOS version. Manually collecting logs remotely..."
@@ -159,7 +205,7 @@ EOF
         echo "Step 2/7: Collecting scheduled tech-support history..."
         run_remote_bash_cmd "cd /mnt/flash && sudo tar -cvf /mnt/flash/${CASE_NUMBER}-${REMOTE_HOSTNAME}-history-tech-${DATE_STAMP}.tar schedule/tech-support/"
         
-        ## FOR TESTING ## - The following large file collections are disabled.
+        ## FOR TESTING ##
         echo "Step 3/7: Collecting debug folder... (SKIPPED FOR TESTING)"
         #run_remote_bash_cmd "cd /mnt/flash && sudo tar -czvf /mnt/flash/${CASE_NUMBER}-${REMOTE_HOSTNAME}-debug-folder-${DATE_STAMP}.tar.gz debug/"
         
@@ -190,12 +236,16 @@ EOF
         echo -e "  --> ./${LOCAL_DATE_FOLDER}/${FINAL_BUNDLE_NAME}"
         echo -e "\nPlease attach this local file to your support case."
         echo -e "------------------------------------------------------------\n"
+        
+        # --- NEW: Call decompression function ---
+        decompress_bundle "./${LOCAL_DATE_FOLDER}/${FINAL_BUNDLE_NAME}"
     fi
 
 # ==============================================================================
 # --- ON-BOX EXECUTION MODE ---
 # ==============================================================================
 else
+    # This section is for running directly on the switch and remains unchanged.
     echo "Running in On-Box Mode."
     HOSTNAME=$(hostname)
     TARGET_VERSION="4.26.1F"

@@ -48,4 +48,4 @@ For this method to work, the EOS device must be able to connect to the internet.
 This command uses "Process Substitution" (`<(...)`) to execute the script while keeping your keyboard connected for interactive input. From the EOS bash shell, run:
 
 ```bash
-bash <(curl -sL [https://raw.githubusercontent.com/diogo-arista/arista-tac-utilities/main/eos-log-collection/tac_log_collector.sh](https://raw.githubusercontent.com/diogo-arista/arista-tac-utilities/main/eos-log-collection/tac_log_collector.sh))
+bash <(curl -sL https://raw.githubusercontent.com/diogo-arista/arista-tac-utilities/main/eos-log-collection/tac_log_collector.sh)

@@ -10,36 +10,14 @@ It intelligently detects the device's EOS version and runs the appropriate comma
 -   **Smart Command Selection**:
     -   On **EOS 4.26.1F or newer**, it uses the modern, all-in-one `send support-bundle` command.
     -   On **older EOS versions**, it executes the traditional, comprehensive set of legacy commands to manually create a log bundle.
+-   **Flexible Execution**: Run the script from a local file or directly from this GitHub repository.
 -   **Interactive & Non-Interactive Modes**: Run the script with the case number as a command-line argument for quick execution, or run it without arguments for a guided, interactive experience.
 -   **Flexible Destination**: For modern EOS versions, the script prompts for a destination, allowing you to save the bundle locally to `flash:` or send it directly to a remote server via `scp`.
 -   **Built-in Help**: A simple `--help` or `-h` flag provides usage instructions and examples.
 
-## How It Works
+## Installation (for Local Execution)
 
-The script follows a clear logical flow:
-
-1.  **Argument Parsing**: It first checks if the user has requested `--help` or provided a case number as a command-line argument.
-2.  **Case Number Input**: If a case number was not provided as an argument, the script interactively prompts the user to enter one.
-3.  **Version Check**: It executes `show version` on the device to determine the software version.
-4.  **Conditional Execution**:
-    -   **If the EOS version is 4.26.1F or newer**:
-        -   The script prompts the user to enter a destination URL (e.g., `flash:/` or `scp://user@host/path`). It defaults to `flash:/` for simplicity.
-        -   It then executes the `send support-bundle` command, passing the destination and case number to generate a `.zip` file.
-    -   **If the EOS version is older than 4.26.1F**:
-        -   The script executes a sequence of five `tar` commands to archive critical logs and directories (`/var/log`, `debug`, `Fossil`, `schedule/tech-support`, `core` files).
-        -   It runs `show tech-support` and compresses the output.
-        -   Finally, it bundles all the generated archives and logs into a single `.tar` file, cleaning up the intermediate files.
-5.  **Completion Message**: The script concludes by displaying a confirmation message, pointing the user to the exact file that needs to be collected and uploaded to the Arista support portal.
-
-## Prerequisites
-
--   An Arista EOS device.
--   Access to the Bash shell on the device.
--   User privileges sufficient to run `sudo` and `FastCli` commands.
-
-## Installation
-
-No complex installation is needed. Simply get the script onto your Arista switch's flash storage.
+This step is only required if you want to keep a local copy of the script on your switch.
 
 1.  Copy the `tac_log_collector.sh` script content from this repository.
 2.  On the Arista switch, save the content to a file in `/mnt/flash`. You can use `vi` or any other text editor.
@@ -55,12 +33,19 @@ No complex installation is needed. Simply get the script onto your Arista switch
     [admin@AristaSW ~]$ bash chmod +x /mnt/flash/tac_log_collector.sh
     ```
 
-## Usage
+## Executing Directly from GitHub (No Installation Needed)
 
-You can run the script in several ways from the EOS command line.
+This is the recommended method for ensuring you are always running the latest version of the script without needing to copy it to the device first.
 
-#### Displaying the Help Menu
-To see the available options and examples, use the `-h` or `--help` flag.
+### Prerequisites for Direct Execution
+
+For this method to work, the EOS device must be able to connect to the internet.
+1.  **DNS Configuration**: The switch must have a DNS server configured to resolve `raw.githubusercontent.com`.
+2.  **Network Access**: The switch needs a route to the internet, and any firewalls must allow outbound HTTPS (TCP port 443) traffic.
+
+### Execution Command
+
+This command uses "Process Substitution" (`<(...)`) to execute the script while keeping your keyboard connected for interactive input. From the EOS bash shell, run:
 
 ```bash
-bash /mnt/flash/tac_log_collector.sh --help
+bash <(curl -sL [https://raw.githubusercontent.com/diogo-arista/arista-tac-utilities/main/eos-log-collection/tac_log_collector.sh](https://raw.githubusercontent.com/diogo-arista/arista-tac-utilities/main/eos-log-collection/tac_log_collector.sh))

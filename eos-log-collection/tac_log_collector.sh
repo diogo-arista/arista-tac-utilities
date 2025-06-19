@@ -1,15 +1,17 @@
 #!/bin/bash
 
 # #############################################################################
-# Arista TAC Log Collection Script (v23)
+# Arista TAC Log Collection Script (v24)
 #
 # This script collects a support bundle from an Arista EOS device.
 # It can be run directly on the EOS device or remotely from a client machine.
 #
 # Changelog:
+# v24: Major fix for on-box mode.
+#      - Corrected FTP URL construction in the transfer function.
+#      - Made modern EOS on-box mode consistent by creating the bundle locally
+#        first, then offering the same SCP/FTP transfer option.
 # v23: Added FTP as an optional transfer protocol for the on-box mode.
-# v22: Fixed on-box transfer feature by correctly formatting the `copy`
-#      command and implementing interactive prompts for remote details.
 #
 # #############################################################################
 
@@ -73,7 +75,6 @@ transfer_onbox_bundle() {
         return 0
     fi
 
-    # --- NEW: Ask for protocol ---
     read -p "Protocol to use for transfer [scp/ftp]: " protocol
     protocol=${protocol:-scp}
 
@@ -83,17 +84,20 @@ transfer_onbox_bundle() {
     local source_filename
     source_filename=$(basename "$local_file_path")
 
-    # --- NEW: Logic branches based on protocol ---
     if [[ "$protocol" == "ftp" ]]; then
         echo "FTP transfer selected."
-        read -p "FTP server address: " remote_host
+        read -p "FTP server address (e.g., ftp.arista.com): " remote_host
         if [[ -z "$remote_host" ]]; then echo "Error: FTP server address is required."; return 1; fi
         
         read -p "FTP user [anonymous]: " remote_user
         remote_user=${remote_user:-anonymous}
 
-        read -p "FTP remote directory path (e.g., /support/): " remote_path
-        remote_url="ftp://${remote_user}@${remote_host}${remote_path}${source_filename}"
+        read -p "FTP base directory path (e.g., /support): " remote_base_path
+        # Ensure path starts with a slash and ends with a slash
+        [[ "$remote_base_path" != /* ]] && remote_base_path="/${remote_base_path}"
+        [[ "$remote_base_path" != */ ]] && remote_base_path="${remote_base_path}/"
+        
+        remote_url="ftp://${remote_user}@${remote_host}${remote_base_path}${CASE_NUMBER}/${source_filename}"
 
     elif [[ "$protocol" == "scp" ]]; then
         echo "SCP transfer selected."
@@ -191,10 +195,7 @@ EOF
     TARGET_VERSION="4.26.1F"
     if version_ge "$REMOTE_EOS_VERSION" "$TARGET_VERSION"; then
         echo "Running on a modern EOS version. Using 'send support-bundle' remotely..."
-        read -p "Enter destination ON THE REMOTE SWITCH [default: flash:/]: " DESTINATION_URL
-        if [[ -z "$DESTINATION_URL" ]]; then DESTINATION_URL="flash:/"; fi
-
-        run_remote_eos_cmd send support-bundle "${DESTINATION_URL}" case-number "${CASE_NUMBER}"
+        run_remote_eos_cmd send support-bundle "flash:" case-number "${CASE_NUMBER}"
         echo "Finding generated bundle on remote device..."
         BUNDLE_PATH=$(run_remote_bash_cmd "ls -t /mnt/flash/support-bundle-SR${CASE_NUMBER}-* 2>/dev/null | head -1")
         if [[ -z "$BUNDLE_PATH" ]]; then echo "Warning: Could not automatically find bundle."; exit 0; fi
@@ -247,11 +248,25 @@ else
     echo "Detected EOS version: $EOS_VERSION"
 
     if version_ge "$EOS_VERSION" "$TARGET_VERSION"; then
-        echo "Running on a modern EOS version. Using 'send support-bundle'..."
-        read -p "Enter destination URL (e.g., flash:/ or scp://user@host/path) [default: flash:/]: " DESTINATION_URL
-        if [[ -z "$DESTINATION_URL" ]]; then DESTINATION_URL="flash:/"; fi
-        FastCli -p 15 -c "send support-bundle ${DESTINATION_URL} case-number ${CASE_NUMBER}"
-        echo -e "\n-----------\n\nCompleted. Bundle operation finished.\n"
+        echo "Running on a modern EOS version. Creating support bundle locally..."
+        
+        # --- MODIFIED: Always create the bundle locally first ---
+        local output
+        output=$(FastCli -p 15 -c "send support-bundle flash: case-number ${CASE_NUMBER}")
+        echo "$output"
+
+        # Try to parse the filename from the output
+        local bundle_filename
+        bundle_filename=$(echo "$output" | awk -F' ' '/Support bundle .* successfully sent/ {print $3}')
+        
+        if [[ -n "$bundle_filename" ]]; then
+            local bundle_path="/mnt/flash/${bundle_filename}"
+            # --- MODIFIED: Call the unified transfer function ---
+            transfer_onbox_bundle "$bundle_path"
+        else
+            echo "Warning: Could not determine the bundle filename automatically."
+            echo "Please check flash: for the support bundle."
+        fi
     else
         echo "Running on an older EOS version. Manually collecting logs..."
         DATE_STAMP=$(date +%m_%d.%H%M)
@@ -269,6 +284,7 @@ else
         echo "Bundling all collected files..."
         bash -c "cd /mnt/flash && tar --remove-files -cf ${FINAL_BUNDLE} ${CASE_NUMBER}-*"
 
+        # Call the unified transfer function
         transfer_onbox_bundle "$FINAL_BUNDLE"
     fi
 fi

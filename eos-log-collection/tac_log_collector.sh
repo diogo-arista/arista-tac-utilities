@@ -1,16 +1,15 @@
 #!/bin/bash
 
 # #############################################################################
-# Arista TAC Log Collection Script (v24)
+# Arista TAC Log Collection Script (v25)
 #
 # This script collects a support bundle from an Arista EOS device.
 # It can be run directly on the EOS device or remotely from a client machine.
 #
 # Changelog:
-# v24: Major fix for on-box mode.
-#      - Corrected FTP URL construction in the transfer function.
-#      - Made modern EOS on-box mode consistent by creating the bundle locally
-#        first, then offering the same SCP/FTP transfer option.
+# v25: Added ftp.arista.com as the default server for the on-box FTP
+#      transfer option to improve user experience.
+# v24: Major fix for on-box mode to add consistent transfer options.
 # v23: Added FTP as an optional transfer protocol for the on-box mode.
 #
 # #############################################################################
@@ -86,14 +85,14 @@ transfer_onbox_bundle() {
 
     if [[ "$protocol" == "ftp" ]]; then
         echo "FTP transfer selected."
-        read -p "FTP server address (e.g., ftp.arista.com): " remote_host
-        if [[ -z "$remote_host" ]]; then echo "Error: FTP server address is required."; return 1; fi
+        # --- NEW: Added default for FTP server ---
+        read -p "FTP server address [ftp.arista.com]: " temp_host
+        remote_host=${temp_host:-ftp.arista.com}
         
         read -p "FTP user [anonymous]: " remote_user
         remote_user=${remote_user:-anonymous}
 
         read -p "FTP base directory path (e.g., /support): " remote_base_path
-        # Ensure path starts with a slash and ends with a slash
         [[ "$remote_base_path" != /* ]] && remote_base_path="/${remote_base_path}"
         [[ "$remote_base_path" != */ ]] && remote_base_path="${remote_base_path}/"
         
@@ -250,18 +249,15 @@ else
     if version_ge "$EOS_VERSION" "$TARGET_VERSION"; then
         echo "Running on a modern EOS version. Creating support bundle locally..."
         
-        # --- MODIFIED: Always create the bundle locally first ---
         local output
         output=$(FastCli -p 15 -c "send support-bundle flash: case-number ${CASE_NUMBER}")
         echo "$output"
 
-        # Try to parse the filename from the output
         local bundle_filename
         bundle_filename=$(echo "$output" | awk -F' ' '/Support bundle .* successfully sent/ {print $3}')
         
         if [[ -n "$bundle_filename" ]]; then
             local bundle_path="/mnt/flash/${bundle_filename}"
-            # --- MODIFIED: Call the unified transfer function ---
             transfer_onbox_bundle "$bundle_path"
         else
             echo "Warning: Could not determine the bundle filename automatically."
@@ -284,7 +280,6 @@ else
         echo "Bundling all collected files..."
         bash -c "cd /mnt/flash && tar --remove-files -cf ${FINAL_BUNDLE} ${CASE_NUMBER}-*"
 
-        # Call the unified transfer function
         transfer_onbox_bundle "$FINAL_BUNDLE"
     fi
 fi

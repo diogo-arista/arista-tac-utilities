@@ -1,16 +1,15 @@
 #!/bin/bash
 
 # #############################################################################
-# Arista TAC Log Collection Script (v25)
+# Arista TAC Log Collection Script (v26)
 #
 # This script collects a support bundle from an Arista EOS device.
 # It can be run directly on the EOS device or remotely from a client machine.
 #
 # Changelog:
-# v25: Added ftp.arista.com as the default server for the on-box FTP
-#      transfer option to improve user experience.
-# v24: Major fix for on-box mode to add consistent transfer options.
-# v23: Added FTP as an optional transfer protocol for the on-box mode.
+# v26: Corrected FTP URL construction and fixed the `copy` command pathing
+#      issue for on-box transfers.
+# v25: Added ftp.arista.com as the default server for the on-box FTP option.
 #
 # #############################################################################
 
@@ -85,18 +84,19 @@ transfer_onbox_bundle() {
 
     if [[ "$protocol" == "ftp" ]]; then
         echo "FTP transfer selected."
-        # --- NEW: Added default for FTP server ---
         read -p "FTP server address [ftp.arista.com]: " temp_host
         remote_host=${temp_host:-ftp.arista.com}
         
         read -p "FTP user [anonymous]: " remote_user
         remote_user=${remote_user:-anonymous}
 
-        read -p "FTP base directory path (e.g., /support): " remote_base_path
+        read -p "FTP base directory on server [/support]: " remote_base_path
+        remote_base_path=${remote_base_path:-/support}
+        # Ensure path starts with a slash but does not end with one
         [[ "$remote_base_path" != /* ]] && remote_base_path="/${remote_base_path}"
-        [[ "$remote_base_path" != */ ]] && remote_base_path="${remote_base_path}/"
-        
-        remote_url="ftp://${remote_user}@${remote_host}${remote_base_path}${CASE_NUMBER}/${source_filename}"
+        remote_base_path=${remote_base_path%/}
+
+        remote_url="ftp://${remote_user}@${remote_host}${remote_base_path}/${CASE_NUMBER}/${source_filename}"
 
     elif [[ "$protocol" == "scp" ]]; then
         echo "SCP transfer selected."
@@ -114,8 +114,8 @@ transfer_onbox_bundle() {
         return 1
     fi
 
-    local eos_source_path=${local_file_path/^\/mnt\/flash\//flash:}
-    local final_copy_cmd="copy ${eos_source_path} ${remote_url}"
+    # --- MODIFIED: Build a more robust copy command ---
+    local final_copy_cmd="copy flash:${source_filename} ${remote_url}"
 
     echo "The following command will be run:"
     echo "  ${final_copy_cmd}"

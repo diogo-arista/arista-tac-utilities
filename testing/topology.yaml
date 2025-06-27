@@ -1,0 +1,88 @@
+name: "testing-topology"
+topology:
+  kinds:
+    ceos:
+      image: "ceos:4.34.1F"
+  nodes:
+    ceos1:
+      kind: "ceos"
+      binds:
+        - shared/:/mnt/flash/shared:rw
+    ceos2:
+      kind: "ceos"
+      binds:
+        - shared/:/mnt/flash/shared:rw
+    ceos3:
+      kind: "ceos"
+      binds:
+        - shared/:/mnt/flash/shared:rw
+    ceos4:
+      kind: "ceos"
+      binds:
+        - shared/:/mnt/flash/shared:rw
+    ceos5:
+      kind: "ceos"
+      binds:
+        - shared/:/mnt/flash/shared:rw
+    ceos6:
+      kind: "ceos"
+      binds:
+        - shared/:/mnt/flash/shared:rw
+    host1:
+      kind: "linux"
+      image: "ghcr.io/aristanetworks/aclabs/host-ubuntu:rev1.0"
+    host2:
+      kind: "linux"
+      image: "ghcr.io/aristanetworks/aclabs/host-ubuntu:rev1.0"
+    host3:
+      kind: "linux"
+      image: "ghcr.io/aristanetworks/aclabs/host-ubuntu:rev1.0"
+    host4:
+      kind: "linux"
+      image: "ghcr.io/aristanetworks/aclabs/host-ubuntu:rev1.0"
+  links:
+    - endpoints:
+        - "ceos5:eth1"
+        - "ceos1:eth1"
+    - endpoints:
+        - "ceos6:eth1"
+        - "ceos1:eth2"
+    - endpoints:
+        - "ceos5:eth2"
+        - "ceos2:eth1"
+    - endpoints:
+        - "ceos6:eth2"
+        - "ceos2:eth2"
+    - endpoints:
+        - "ceos5:eth3"
+        - "ceos3:eth1"
+    - endpoints:
+        - "ceos6:eth3"
+        - "ceos3:eth2"
+    - endpoints:
+        - "ceos5:eth4"
+        - "ceos4:eth1"
+    - endpoints:
+        - "ceos6:eth4"
+        - "ceos4:eth2"
+    - endpoints:
+        - "ceos1:eth3"
+        - "ceos2:eth3"
+    - endpoints:
+        - "ceos2:eth4"
+        - "ceos1:eth4"
+    - endpoints:
+        - "ceos1:eth5"
+        - "host1:eth1"
+    - endpoints:
+        - "ceos2:eth5"
+        - "host1:eth2"
+    - endpoints:
+        - "ceos2:eth6"
+        - "host2:eth1"
+    - endpoints:
+        - "ceos3:eth3"
+        - "host3:eth1"
+    - endpoints:
+        - "ceos4:eth3"
+        - "host4:eth1"

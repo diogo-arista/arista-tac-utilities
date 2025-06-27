@@ -3,7 +3,7 @@
 # #############################################################################
 # Arista EOS Health Check Script
 #
-# Version: 1.3.1
+# Version: 1.3.2
 # Author: Gemini AI
 #
 # Objective:
@@ -12,13 +12,12 @@
 # relying solely on standard Python 3 and native EOS tools.
 #
 # Changelog:
-# v1.3.1 - Corrected logic for core dump and agent crash detection to fix
-#          false positives. Improved clarity of the report for these items.
+# v1.3.2 - Corrected Spanning Tree check to use 'show spanning-tree' for robust
+#          reporting, especially when the switch is the root bridge.
+# v1.3.1 - Corrected logic for core dump and agent crash detection.
 # v1.3.0 - Added syslog parsing to detect and report on interface and BGP flaps.
 #        - BGP summary now includes the duration (Up/Down time) for each peer.
 # v1.2.4 - Added graceful handling for when BGP is inactive.
-# v1.2.3 - Enhanced BGP summary parsing for 'Missing Router ID' and no neighbors.
-# v1.2.2 - Corrected agent crash and PCI check commands and parsers.
 #
 # #############################################################################
 
@@ -39,7 +38,7 @@ import logging
 from collections import Counter
 
 # --- Global Configuration ---
-SCRIPT_VERSION = "1.3.1"
+SCRIPT_VERSION = "1.3.2"
 LOG_DIR_LOCAL = "/mnt/flash/"
 ARISTA_FTP = "ftp.arista.com"
 FLAP_THRESHOLD = 2 # Report if an interface or peer flaps more than this many times
@@ -243,13 +242,10 @@ def parse_filesystem_usage(output):
 
 def parse_system_errors(core_output, agent_output, pci_output):
     errors = {"core_dumps": False, "agent_crashes": False, "pci_errors": "No PCI errors found."}
-    # Core Dumps: check if line count > 1 (to ignore the "total 0" line)
     if core_output and len(core_output.strip().splitlines()) > 1:
         errors["core_dumps"] = True
-    # Agent Crashes: check if output is not empty
     if agent_output and agent_output.strip():
         errors["agent_crashes"] = True
-    # PCI Errors
     pci_error_list = []
     if pci_output and 'pciIds' in pci_output:
         for pci_id, details in pci_output['pciIds'].items():
@@ -262,7 +258,6 @@ def parse_system_errors(core_output, agent_output, pci_output):
     return errors
 
 def parse_syslog_flaps(syslog_output):
-    """Parses syslog for interface and BGP flap events."""
     if not syslog_output: return {"interface_flaps": {}, "bgp_flaps": {}}
     intf_regex = re.compile(r"%LINEPROTO-5-UPDOWN:.*?Interface (\S+),")
     bgp_regex = re.compile(r"%BGP-5-ADJCHANGE: peer (\S+)")
@@ -271,7 +266,6 @@ def parse_syslog_flaps(syslog_output):
     return {"interface_flaps": interface_flaps, "bgp_flaps": bgp_flaps}
 
 def format_timedelta_str(duration):
-    """Formats a timedelta object into a human-readable D HH:MM:SS string."""
     days = duration.days
     hours, rem = divmod(duration.seconds, 3600)
     minutes, seconds = divmod(rem, 60)
@@ -310,7 +304,6 @@ def parse_feature_health(bgp_data, mlag_data, vxlan_data):
                     transient = ['Active', 'Connect', 'OpenSent', 'OpenConfirm']
                     color = Colors.WARNING if peer_state in transient else Colors.FAIL
                     peer_statuses.append(f"Peer {peer} is {color}{peer_state}{Colors.RESET} {duration_str}")
-
             summary_color = Colors.OKGREEN if peers_up == total_peers else Colors.FAIL
             health["bgp"] = f"{summary_color}{peers_up}/{total_peers} peers established.{Colors.RESET}\n  " + "\n  ".join(peer_statuses)
     else: health["bgp"] = f"{Colors.WARNING}Unexpected BGP summary format.{Colors.RESET}"
@@ -340,19 +333,36 @@ def parse_interface_health(err_data, disc_data):
     return health
 
 def parse_management_health(cvp_data, stp_data):
+    """Parses CVP connectivity and Spanning Tree status."""
     health = {"cvp": f"{Colors.WARNING}TerminAttr agent not configured.{Colors.RESET}", "stp": "No STP information found."}
+    
+    # CVP Parsing
     if cvp_data:
         for line in cvp_data.splitlines():
             if "server" in line:
                 health["cvp"] = f"{Colors.OKGREEN}{line.strip()}{Colors.RESET}"
                 break
+    
+    # STP Parsing
     if stp_data and 'spanningTreeInstances' in stp_data:
         stp_summary = []
         for instance, details in stp_data['spanningTreeInstances'].items():
-            if details.get('rootBridge'):
-                root_port = details.get('rootPort', 'N/A')
-                stp_summary.append(f"Instance {instance}: Root Port={root_port}")
+            bridge_id = details.get('bridge', {}).get('macAddress', 'N/A')
+            root_id = details.get('rootBridge', {}).get('macAddress', bridge_id) # Default to self if no root
+            
+            if bridge_id == root_id:
+                status = f"{Colors.OKGREEN}This bridge is the root{Colors.RESET}"
+            else:
+                root_port = "N/A"
+                for if_details in details.get('interfaces', {}).values():
+                    if if_details.get('role') == 'root':
+                        root_port = if_details.get('name', 'Unknown')
+                        break
+                status = f"Root Port: {root_port}"
+            stp_summary.append(f"Instance {instance}: {status}")
+
         health["stp"] = "\n  ".join(stp_summary) if stp_summary else "No active STP instances found."
+    
     return health
 
 def parse_lldp_neighbors(lldp_data):
@@ -424,7 +434,6 @@ def format_summary_report(data):
     add("Agent Crashes Found", f"{Colors.FAIL}Yes{Colors.RESET}" if e['agent_crashes'] else f"{Colors.OKGREEN}No{Colors.RESET}")
     add("PCI Errors", f"{Colors.FAIL}Yes{Colors.RESET}" if "found" not in e['pci_errors'] else f"{Colors.OKGREEN}None{Colors.RESET}")
     if "found" not in e['pci_errors']: report.append(f"{'':27}{e['pci_errors']}")
-    # Syslog Flap Reporting
     flaps = data.get('flaps', {})
     intf_flaps = {k: v for k, v in flaps.get('interface_flaps', {}).items() if v > FLAP_THRESHOLD}
     bgp_flaps = {k: v for k, v in flaps.get('bgp_flaps', {}).items() if v > FLAP_THRESHOLD}
@@ -452,7 +461,8 @@ def format_summary_report(data):
     
     section("Management & Connectivity")
     m = data['management']
-    add("CVP/CVaaS Status", m['cvp']); add("STP Root Summary", "\n  " + m['stp'] if "\n" in m['stp'] else m['stp'])
+    add("CVP/CVaaS Status", m['cvp'])
+    add("STP Summary", "\n  " + m['stp'] if "\n" in m['stp'] else m['stp'])
 
     section("LLDP Neighbors")
     l = data['lldp']
@@ -539,7 +549,7 @@ def main():
             "show logging": False, "show pci": True, "show ip bgp summary": True,
             "show mlag": True, "show vxlan vni": True, "show interfaces counters errors": True,
             "show interfaces counters discards": True, "show run | grep TerminAttr": False,
-            "show spanning-tree root detail": True, "show lldp neighbors": True
+            "show spanning-tree": True, "show lldp neighbors": True
         }
         
         raw_data = {}
@@ -563,7 +573,7 @@ def main():
             'interfaces': parse_interface_health(
                 raw_data['show interfaces counters errors'], raw_data['show interfaces counters discards']),
             'management': parse_management_health(
-                raw_data['show run'], raw_data['show spanning-tree root detail']),
+                raw_data['show run'], raw_data['show spanning-tree']),
             'lldp': parse_lldp_neighbors(raw_data['show lldp neighbors']),
             'hostname': executor.hostname
         }

@@ -12,14 +12,17 @@ topology:
         - ../scripts:/mnt/scripts:rw
     leaf2:
       kind: "ceos"
+      startup-config: "configs/leaf2.cfg"
       binds:
         - ../scripts:/mnt/scripts:rw
     leaf3:
       kind: "ceos"
+      startup-config: "configs/leaf3.cfg"
       binds:
         - ../scripts:/mnt/scripts:rw
     spine1:
       kind: "ceos"
+      startup-config: "configs/spine1.cfg"
       binds:
         - ../scripts:/mnt/scripts:rw
 #    host1:

@@ -3,7 +3,7 @@
 # #############################################################################
 # Arista EOS Health Check Script
 #
-# Version: 1.2.3
+# Version: 1.2.4
 # Author: Gemini AI
 #
 # Objective:
@@ -12,12 +12,12 @@
 # relying solely on standard Python 3 and native EOS tools.
 #
 # Changelog:
-# v1.2.3 - Enhanced BGP summary parsing to intelligently report on states like
-#          'Missing Router ID' and 'No neighbors configured'.
-#        - Improved coloring for non-established BGP peer states.
+# v1.2.4 - Added graceful handling for when BGP is inactive, preventing a
+#          script error and reporting the status correctly.
+# v1.2.3 - Enhanced BGP summary parsing for 'Missing Router ID' and no neighbors.
 # v1.2.2 - Corrected agent crash and PCI check commands and parsers.
-# v1.2.1 - Fixed filesystem parsing logic to correctly identify mount points.
-# v1.2.0 - Added color-coded terminal output for improved readability.
+# v1.2.1 - Fixed filesystem parsing logic.
+# v1.2.0 - Added color-coded terminal output.
 # v1.1.0 - Refactored data collection and fixed duplicate '| json' bug.
 #
 # #############################################################################
@@ -38,7 +38,7 @@ import textwrap
 import logging
 
 # --- Global Configuration ---
-SCRIPT_VERSION = "1.2.3"
+SCRIPT_VERSION = "1.2.4"
 LOG_DIR_LOCAL = "/mnt/flash/"
 ARISTA_FTP = "ftp.arista.com"
 
@@ -160,11 +160,21 @@ class CommandExecutor:
 
         try:
             if self.mode == 'local':
+                # Remove check=True to handle non-zero exits gracefully (like 'BGP inactive')
                 result = subprocess.run(
                     ['FastCli', '-p', '15', '-c', full_command],
-                    capture_output=True, text=True, check=True, timeout=60
+                    capture_output=True, text=True, timeout=60
                 )
+                if result.returncode != 0 and use_json:
+                    # If command fails, check if there's a JSON error in stderr to parse
+                    try:
+                        # Sometimes the error message is valid JSON on stderr
+                        return json.loads(result.stderr)
+                    except json.JSONDecodeError:
+                        log.error(f"Command '{full_command}' failed with non-zero exit and non-JSON error: {result.stderr}")
+                        return None
                 output = result.stdout
+
             elif self.eapi_usable:
                 ctx = ssl._create_unverified_context()
                 req_body = self._build_eapi_request([command])
@@ -172,14 +182,25 @@ class CommandExecutor:
                 with urllib.request.urlopen(req, context=ctx, timeout=60) as response:
                     eapi_output = json.loads(response.read().decode())
                     if 'error' in eapi_output:
-                        raise ValueError(f"eAPI error: {eapi_output['error']['message']}")
+                        # This can be a command-level error (like 'BGP inactive') or a JSON-RPC error
+                        # The 'show ip bgp summary' command returns a 200 OK with an error body
+                        if isinstance(eapi_output['error'], dict) and 'data' in eapi_output['error']:
+                             return eapi_output['error']['data'][0]
+                        raise ValueError(f"eAPI error: {eapi_output['error']}")
                     output = json.dumps(eapi_output['result'][0]) if use_json else eapi_output['result'][0]['output']
-            else:
+            else: # SSH fallback
+                # SSH also needs graceful failure
                 ssh_command = ['ssh', '-o', 'StrictHostKeyChecking=no', '-o', 'ConnectTimeout=10',
                                f"{self.ssh_user}@{self.ssh_host}", full_command]
                 result = subprocess.run(
-                    ssh_command, capture_output=True, text=True, check=True, timeout=60
+                    ssh_command, capture_output=True, text=True, timeout=60
                 )
+                if result.returncode != 0 and use_json:
+                    try:
+                        return json.loads(result.stderr)
+                    except json.JSONDecodeError:
+                        log.error(f"SSH command for '{full_command}' failed: {result.stderr}")
+                        return None
                 output = result.stdout
 
             return json.loads(output) if use_json else output
@@ -271,7 +292,6 @@ def parse_system_errors(core_output, agent_output, syslog_output, pci_output):
     if core_output and "total 0" not in core_output and len(core_output.splitlines()) > 1:
         errors["core_dumps"] = f"Core files found:\n{core_output}"
 
-    # Agent Crashes (TEXT PARSING)
     if agent_output and agent_output.strip():
         crash_count = len([line for line in agent_output.strip().splitlines() if line.strip()])
         errors["agent_crashes"] = f"Found {crash_count} agent crash report(s)."
@@ -279,7 +299,6 @@ def parse_system_errors(core_output, agent_output, syslog_output, pci_output):
     if syslog_output:
         errors["syslog_criticals"] = syslog_output.strip().splitlines()
 
-    # PCI Errors (PARSING 'show pci | json')
     pci_error_list = []
     if pci_output and 'pciIds' in pci_output:
         for pci_id, device_details in pci_output['pciIds'].items():
@@ -302,17 +321,21 @@ def parse_system_errors(core_output, agent_output, syslog_output, pci_output):
 def parse_feature_health(bgp_data, mlag_data, vxlan_data):
     """Parses health of key features like BGP, MLAG, and VXLAN."""
     health = {
-        "bgp": "BGP not configured or no summary available.",
+        "bgp": "BGP status could not be determined.",
         "mlag": "MLAG not configured.",
         "vxlan": "No VXLAN VNI information found."
     }
 
-    # BGP Parsing (Enhanced Logic)
-    if bgp_data and 'vrfs' in bgp_data:
+    # BGP Parsing (More Robust Logic)
+    if not bgp_data:
+        health["bgp"] = f"{Colors.FAIL}Could not execute BGP summary command.{Colors.RESET}"
+    elif "errors" in bgp_data:
+        error_msg = bgp_data["errors"][0] if bgp_data["errors"] else "Unknown BGP error"
+        health["bgp"] = f"{Colors.OKGREEN}{error_msg}.{Colors.RESET}"
+    elif 'vrfs' in bgp_data:
         vrf_default = bgp_data['vrfs'].get('default')
-
         if not vrf_default:
-            pass # Keep default message: BGP not configured
+            health["bgp"] = f"{Colors.OKGREEN}BGP is not configured in VRF default.{Colors.RESET}"
         elif "Missing Router ID" in vrf_default.get('reason', ''):
             health["bgp"] = f"{Colors.FAIL}BGP is disabled (Missing Router ID){Colors.RESET}"
         elif not vrf_default.get('peers'):
@@ -334,6 +357,8 @@ def parse_feature_health(bgp_data, mlag_data, vxlan_data):
             health["bgp"] = f"{summary_color}{peers_up}/{total_peers} peers established.{Colors.RESET}"
             if peers_down:
                  health["bgp"] += "\n  " + "\n  ".join(peers_down)
+    else:
+        health["bgp"] = f"{Colors.WARNING}Unexpected BGP summary format.{Colors.RESET}"
     
     # MLAG Parsing
     if mlag_data and mlag_data.get('state') != 'disabled':
@@ -359,7 +384,7 @@ def parse_interface_health(err_data, disc_data):
         for iface, counters in err_data['interfaceErrorCounters'].items():
             if counters.get('inErrors', 0) > 0 or counters.get('outErrors', 0) > 0:
                 health["errors"].append(f"{iface}: In={counters['inErrors']}, Out={counters['outErrors']}")
-            if counters.get('linkStatusChanges', 0) > 10: # Threshold for "flapping"
+            if counters.get('linkStatusChanges', 0) > 10:
                 health["link_flaps"].append(f"{iface}: {counters['linkStatusChanges']} flaps")
     if disc_data and 'interfaceDiscardCounters' in disc_data:
         for iface, counters in disc_data['interfaceDiscardCounters'].items():
@@ -437,7 +462,7 @@ def format_summary_report(data):
         report.append(f"{key:<25}: {value}")
 
     title(f"Arista EOS Health Check Report for {data['hostname']}")
-    add("Timestamp (UTC)", datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"))
+    add("Timestamp (UTC)", datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S %Z"))
     add("Script Version", SCRIPT_VERSION)
 
     section("System Summary")

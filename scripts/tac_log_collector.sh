@@ -1,15 +1,16 @@
 #!/bin/bash
 
 # #############################################################################
-# Arista TAC Log Collection Script (v28)
+# Arista TAC Log Collection Script (v30)
 #
 # This script collects a support bundle from an Arista EOS device.
 # It can be run directly on the EOS device or remotely from a client machine.
 #
 # Changelog:
-# v28: Fixed remote execution failure by prepending 'enable' to all remote
-#      commands to ensure they run with privileged mode.
-# v27: Corrected on-box FTP transfer logic.
+# v30: Removed SSH Connection Sharing (ControlMaster) to fix compatibility
+#      issues in certain environments. This will result in multiple
+#      password prompts during remote execution.
+# v29: Required remote user to have privilege 15.
 #
 # #############################################################################
 
@@ -86,15 +87,12 @@ transfer_onbox_bundle() {
         echo "FTP transfer selected."
         read -p "FTP server address [ftp.arista.com]: " temp_host
         remote_host=${temp_host:-ftp.arista.com}
-        
         read -p "FTP user [anonymous]: " remote_user
         remote_user=${remote_user:-anonymous}
-
         read -p "FTP root upload directory on server [/support]: " remote_root_dir
         remote_root_dir=${remote_root_dir:-/support}
         [[ "$remote_root_dir" != /* ]] && remote_root_dir="/${remote_root_dir}"
         remote_root_dir=${remote_root_dir%/}
-
         remote_url="ftp://${remote_user}@${remote_host}${remote_root_dir}/${CASE_NUMBER}/${source_filename}"
         echo "NOTE: For FTP to succeed, the destination directory '${remote_root_dir}/${CASE_NUMBER}/' must already exist on the server."
 
@@ -102,10 +100,8 @@ transfer_onbox_bundle() {
         echo "SCP transfer selected."
         read -p "Remote host address: " remote_host
         if [[ -z "$remote_host" ]]; then echo "Error: Remote host is required."; return 1; fi
-        
         read -p "Remote user [admin]: " remote_user
         remote_user=${remote_user:-admin}
-
         read -p "Remote path and filename [/tmp/${source_filename}]: " remote_full_path
         remote_full_path=${remote_full_path:-/tmp/${source_filename}}
         remote_url="scp://${remote_user}@${remote_host}:${remote_full_path}"
@@ -157,6 +153,9 @@ echo "Using Case Number: $CASE_NUMBER"
 # ==============================================================================
 if [[ "$RUN_MODE" == "remote" ]]; then
     echo "Running in Remote Mode."
+    echo "REQUIREMENT: The remote user should have privilege level 15."
+    echo "NOTE: You may be prompted for your password multiple times."
+    
     read -p "Enter target Arista device address: " REMOTE_HOST
     read -p "Enter username for ${REMOTE_HOST} [default: admin]: " temp_user
     REMOTE_USER=${temp_user:-admin}
@@ -166,44 +165,31 @@ if [[ "$RUN_MODE" == "remote" ]]; then
     mkdir -p "$LOCAL_DATE_FOLDER"
     echo "Downloaded logs will be saved to: ./${LOCAL_DATE_FOLDER}/"
 
-    CONTROL_PATH="/tmp/ssh-mux-%r@%h:%p"
-    echo "Establishing master SSH connection to ${REMOTE_HOST} as user '${REMOTE_USER}'..."
-    echo "You will be prompted for the password once."
-
-    ssh -o ControlMaster=auto -o ControlPath="$CONTROL_PATH" -o ControlPersist=120s -Nf "${REMOTE_USER}@${REMOTE_HOST}"
-    SSH_STATUS=$?
-    if [ $SSH_STATUS -ne 0 ]; then echo "Error: SSH connection failed."; exit $SSH_STATUS; fi
-
-    function cleanup { 
-        echo "Closing master SSH connection..."
-        ssh -o ControlPath="$CONTROL_PATH" -O exit "${REMOTE_USER}@${REMOTE_HOST}" 2>/dev/null; 
-    }
-    trap cleanup EXIT
-
-    # --- MODIFIED: Helper functions now prepend 'enable' ---
+    # --- MODIFIED: Removed all ControlMaster logic ---
     run_remote_eos_cmd() {
-        ssh -o ControlPath="$CONTROL_PATH" "${REMOTE_USER}@${REMOTE_HOST}" enable "$@"
+        ssh "${REMOTE_USER}@${REMOTE_HOST}" "$@"
     }
     run_remote_bash_cmd() {
-        ssh -o ControlPath="$CONTROL_PATH" "${REMOTE_USER}@${REMOTE_HOST}" enable bash << EOF
+        ssh "${REMOTE_USER}@${REMOTE_HOST}" bash << EOF
 $@
 EOF
     }
-    # scp does not need 'enable'
     scp_remote_file() {
-        scp -o ControlPath="$CONTROL_PATH" "${REMOTE_USER}@${REMOTE_HOST}:$1" "$2"
+        scp "${REMOTE_USER}@${REMOTE_HOST}:$1" "$2"
     }
 
     echo "Checking remote EOS version..."
-    REMOTE_HOSTNAME=$(run_remote_eos_cmd show hostname | awk '/Hostname:/ {print $2}')
-    REMOTE_EOS_VERSION=$(run_remote_eos_cmd show version | grep 'Software image version' | awk '{print $4}')
-    if [[ -z "$REMOTE_EOS_VERSION" ]]; then echo "Error: Could not determine remote EOS version."; exit 1; fi
+    # We must quote the command for the remote shell
+    REMOTE_HOSTNAME=$(run_remote_eos_cmd "show hostname" | awk '/Hostname:/ {print $2}')
+    REMOTE_EOS_VERSION=$(run_remote_eos_cmd "show version" | grep 'Software image version' | awk '{print $4}')
+    
+    if [[ -z "$REMOTE_EOS_VERSION" ]]; then echo "Error: Could not determine remote EOS version. Please check connectivity and credentials."; exit 1; fi
     echo "Detected Remote EOS version: $REMOTE_EOS_VERSION on host ${REMOTE_HOSTNAME}"
 
     TARGET_VERSION="4.26.1F"
     if version_ge "$REMOTE_EOS_VERSION" "$TARGET_VERSION"; then
         echo "Running on a modern EOS version. Using 'send support-bundle' remotely..."
-        run_remote_eos_cmd send support-bundle "flash:" case-number "${CASE_NUMBER}"
+        run_remote_eos_cmd "send support-bundle flash: case-number ${CASE_NUMBER}"
         echo "Finding generated bundle on remote device..."
         BUNDLE_PATH=$(run_remote_bash_cmd "ls -t /mnt/flash/support-bundle-SR${CASE_NUMBER}-* 2>/dev/null | head -1")
         if [[ -z "$BUNDLE_PATH" ]]; then echo "Warning: Could not automatically find bundle."; exit 0; fi
@@ -249,6 +235,7 @@ EOF
 # --- ON-BOX EXECUTION MODE ---
 # ==============================================================================
 else
+    # On-box logic remains unchanged
     echo "Running in On-Box Mode."
     HOSTNAME=$(hostname)
     TARGET_VERSION="4.26.1F"
@@ -257,20 +244,16 @@ else
 
     if version_ge "$EOS_VERSION" "$TARGET_VERSION"; then
         echo "Running on a modern EOS version. Creating support bundle locally..."
-        
         local output
         output=$(FastCli -p 15 -c "send support-bundle flash: case-number ${CASE_NUMBER}")
         echo "$output"
-
         local bundle_filename
         bundle_filename=$(echo "$output" | awk -F' ' '/Support bundle .* successfully sent/ {print $3}')
-        
         if [[ -n "$bundle_filename" ]]; then
             local bundle_path="/mnt/flash/${bundle_filename}"
             transfer_onbox_bundle "$bundle_path"
         else
             echo "Warning: Could not determine the bundle filename automatically."
-            echo "Please check flash: for the support bundle."
         fi
     else
         echo "Running on an older EOS version. Manually collecting logs..."
@@ -288,7 +271,6 @@ else
         
         echo "Bundling all collected files..."
         bash -c "cd /mnt/flash && tar --remove-files -cf ${FINAL_BUNDLE} ${CASE_NUMBER}-*"
-
         transfer_onbox_bundle "$FINAL_BUNDLE"
     fi
 fi

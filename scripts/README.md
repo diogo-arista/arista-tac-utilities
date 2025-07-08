@@ -1,30 +1,42 @@
 # Arista TAC Log Collection Script
 
-This script is a comprehensive utility designed to simplify and automate the process of collecting support log bundles from Arista EOS devices. It intelligently adapts its behavior whether it's run directly on a switch or remotely from an engineer's workstation, ensuring a consistent and reliable process for gathering troubleshooting information for the Arista Technical Assistance Center (TAC).
+This is a Bash script designed to **collect support bundles** from Arista EOS devices. It can be run:
+- **Directly on the EOS switch** (on-box), or
+- **Remotely from a laptop or server** (remote mode)
 
-## Features
-
--   **Dual Execution Modes**: The script automatically detects if it's running on an Arista switch (**On-Box Mode**) or a user's computer (**Remote Mode**).
--   **Smart Version Detection**: Automatically checks the EOS version to run the correct log collection commands (`send support-bundle` for modern versions, legacy `tar` commands for older ones).
--   **Dependency-Free Remote Control**: Securely runs commands on a remote switch using a built-in SSH feature (**Connection Sharing**), requiring no special software like `sshpass` and only asking for a password once.
--   **Automated Log Download**: When run in remote mode, the script automatically downloads the final log bundle to your local computer via SCP.
--   **Organized Local Storage**: Automatically creates a date-stamped folder (e.g., `2025-07-08`) on your local machine to store downloaded logs neatly.
--   **Optional On-Box File Transfer**: When run directly on a switch, it provides an option to transfer the generated bundle to a remote server using **SCP** or **FTP**.
--   **Optional Decompression**: After downloading a bundle, it offers to decompress the `.zip` or `.tar` file into a subfolder for immediate analysis.
--   **User-Friendly Defaults**: Provides sensible defaults for usernames (`admin`), FTP servers (`ftp.arista.com`), and placeholder case numbers (`0000`) to speed up the workflow.
--   **Command-Line Arguments**: Supports passing a case number directly as an argument and includes a `--help` menu for usage instructions.
+It supports **modern EOS versions** with the `send support-bundle` command as well as **older versions** where manual collection is required.
 
 ---
-## How to Use
 
-There are three primary ways to use this script, depending on your workflow.
+## 📦 Features
 
-### Method 1: Running Remotely from Your Computer (Recommended)
+- Automatically detects if you're running on-box or remotely
+- Works with EOS 4.26.1F and later using `send support-bundle`
+- Supports manual log collection for older EOS versions
+- Transfers bundle files using `scp` or `ftp`
+- Offers optional local decompression of downloaded bundles
+- Supports Linux, macOS, and Windows WSL
 
-This is the most powerful and common method. You can run the script from any **Linux**, **macOS**, or **Windows (WSL)** terminal to connect to an Arista device and collect its logs.
+---
 
-#### ▶️ Execute Directly from GitHub (Easiest Way)
-This command downloads and runs the script in one step. It's the best way to ensure you're always using the latest version.
+## 🖥 Requirements
 
-```bash
-bash <(curl -sL [https://raw.githubusercontent.com/diogo-arista/arista-tac-utilities/main/eos-log-collection/tac_log_collector.sh](https://raw.githubusercontent.com/diogo-arista/arista-tac-utilities/main/eos-log-collection/tac_log_collector.sh))
+To run this script from your laptop (remote mode), you'll need:
+- `bash`
+- `ssh` and `scp`
+- `tar`, `gzip`, `unzip` (for decompressing)
+- A user account on the Arista device with access to `FastCli`
+
+To run on the **EOS device**, it must support Bash scripting and have access to `FastCli`.
+
+---
+
+## 🚀 Usage
+
+### 🛠 Local Setup (macOS / Linux / WSL on Windows)
+
+1. Clone this repository:
+
+   ```bash
+   git clone https://github.com/<your-org-or-user>/<repo-name>.git
+   cd <repo-name>

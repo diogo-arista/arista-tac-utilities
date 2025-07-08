@@ -1,15 +1,15 @@
 #!/bin/bash
 
 # #############################################################################
-# Arista TAC Log Collection Script (v27)
+# Arista TAC Log Collection Script (v28)
 #
 # This script collects a support bundle from an Arista EOS device.
 # It can be run directly on the EOS device or remotely from a client machine.
 #
 # Changelog:
-# v27: Final fix for on-box FTP transfers. Correctly constructs the remote
-#      URL path and adds a note about pre-existing directories.
-# v26: Corrected FTP URL construction and copy command pathing.
+# v28: Fixed remote execution failure by prepending 'enable' to all remote
+#      commands to ensure they run with privileged mode.
+# v27: Corrected on-box FTP transfer logic.
 #
 # #############################################################################
 
@@ -92,7 +92,6 @@ transfer_onbox_bundle() {
 
         read -p "FTP root upload directory on server [/support]: " remote_root_dir
         remote_root_dir=${remote_root_dir:-/support}
-        # Ensure path starts with a slash but does not end with one
         [[ "$remote_root_dir" != /* ]] && remote_root_dir="/${remote_root_dir}"
         remote_root_dir=${remote_root_dir%/}
 
@@ -175,15 +174,25 @@ if [[ "$RUN_MODE" == "remote" ]]; then
     SSH_STATUS=$?
     if [ $SSH_STATUS -ne 0 ]; then echo "Error: SSH connection failed."; exit $SSH_STATUS; fi
 
-    function cleanup { ssh -o ControlPath="$CONTROL_PATH" -O exit "${REMOTE_USER}@${REMOTE_HOST}" 2>/dev/null; }
+    function cleanup { 
+        echo "Closing master SSH connection..."
+        ssh -o ControlPath="$CONTROL_PATH" -O exit "${REMOTE_USER}@${REMOTE_HOST}" 2>/dev/null; 
+    }
     trap cleanup EXIT
 
-    run_remote_eos_cmd() { ssh -o ControlPath="$CONTROL_PATH" "${REMOTE_USER}@${REMOTE_HOST}" "$@"; }
-    run_remote_bash_cmd() { ssh -o ControlPath="$CONTROL_PATH" "${REMOTE_USER}@${REMOTE_HOST}" bash << EOF
+    # --- MODIFIED: Helper functions now prepend 'enable' ---
+    run_remote_eos_cmd() {
+        ssh -o ControlPath="$CONTROL_PATH" "${REMOTE_USER}@${REMOTE_HOST}" enable "$@"
+    }
+    run_remote_bash_cmd() {
+        ssh -o ControlPath="$CONTROL_PATH" "${REMOTE_USER}@${REMOTE_HOST}" enable bash << EOF
 $@
 EOF
     }
-    scp_remote_file() { scp -o ControlPath="$CONTROL_PATH" "${REMOTE_USER}@${REMOTE_HOST}:$1" "$2"; }
+    # scp does not need 'enable'
+    scp_remote_file() {
+        scp -o ControlPath="$CONTROL_PATH" "${REMOTE_USER}@${REMOTE_HOST}:$1" "$2"
+    }
 
     echo "Checking remote EOS version..."
     REMOTE_HOSTNAME=$(run_remote_eos_cmd show hostname | awk '/Hostname:/ {print $2}')

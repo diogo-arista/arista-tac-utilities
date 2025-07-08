@@ -1,15 +1,15 @@
 #!/bin/bash
 
 # #############################################################################
-# Arista TAC Log Collection Script (v26)
+# Arista TAC Log Collection Script (v27)
 #
 # This script collects a support bundle from an Arista EOS device.
 # It can be run directly on the EOS device or remotely from a client machine.
 #
 # Changelog:
-# v26: Corrected FTP URL construction and fixed the `copy` command pathing
-#      issue for on-box transfers.
-# v25: Added ftp.arista.com as the default server for the on-box FTP option.
+# v27: Final fix for on-box FTP transfers. Correctly constructs the remote
+#      URL path and adds a note about pre-existing directories.
+# v26: Corrected FTP URL construction and copy command pathing.
 #
 # #############################################################################
 
@@ -90,13 +90,14 @@ transfer_onbox_bundle() {
         read -p "FTP user [anonymous]: " remote_user
         remote_user=${remote_user:-anonymous}
 
-        read -p "FTP base directory on server [/support]: " remote_base_path
-        remote_base_path=${remote_base_path:-/support}
+        read -p "FTP root upload directory on server [/support]: " remote_root_dir
+        remote_root_dir=${remote_root_dir:-/support}
         # Ensure path starts with a slash but does not end with one
-        [[ "$remote_base_path" != /* ]] && remote_base_path="/${remote_base_path}"
-        remote_base_path=${remote_base_path%/}
+        [[ "$remote_root_dir" != /* ]] && remote_root_dir="/${remote_root_dir}"
+        remote_root_dir=${remote_root_dir%/}
 
-        remote_url="ftp://${remote_user}@${remote_host}${remote_base_path}/${CASE_NUMBER}/${source_filename}"
+        remote_url="ftp://${remote_user}@${remote_host}${remote_root_dir}/${CASE_NUMBER}/${source_filename}"
+        echo "NOTE: For FTP to succeed, the destination directory '${remote_root_dir}/${CASE_NUMBER}/' must already exist on the server."
 
     elif [[ "$protocol" == "scp" ]]; then
         echo "SCP transfer selected."
@@ -114,7 +115,6 @@ transfer_onbox_bundle() {
         return 1
     fi
 
-    # --- MODIFIED: Build a more robust copy command ---
     local final_copy_cmd="copy flash:${source_filename} ${remote_url}"
 
     echo "The following command will be run:"
@@ -271,17 +271,4 @@ else
         
         echo "Collecting logs..."
         bash -c "cd / && sudo tar --exclude lastlog -czvf /mnt/flash/${CASE_NUMBER}-${HOSTNAME}-var-log-${DATE_STAMP}.tar.gz var/log/"
-        bash -c "cd /mnt/flash && sudo tar -cvf /mnt/flash/${CASE_NUMBER}-${HOSTNAME}-history-tech-${DATE_STAMP}.tar schedule/tech-support/"
-        bash -c "cd /mnt/flash && sudo tar -czvf /mnt/flash/${CASE_NUMBER}-${HOSTNAME}-debug-folder-${DATE_STAMP}.tar.gz debug/"
-        bash -c "cd /mnt/flash && sudo tar -czvf /mnt/flash/${CASE_NUMBER}-${HOSTNAME}-fossil-folder-${DATE_STAMP}.tar.gz Fossil/"
-        bash -c "cd /var/ && sudo tar --dereference -czvf /mnt/flash/${CASE_NUMBER}-${HOSTNAME}-var-core-${DATE_STAMP}.tar.gz core/"
-        FastCli -p 15 -c "show tech-support" | gzip > "/mnt/flash/${CASE_NUMBER}-${HOSTNAME}-show-tech-${DATE_STAMP}.log.gz"
-        
-        echo "Bundling all collected files..."
-        bash -c "cd /mnt/flash && tar --remove-files -cf ${FINAL_BUNDLE} ${CASE_NUMBER}-*"
-
-        transfer_onbox_bundle "$FINAL_BUNDLE"
-    fi
-fi
-
-echo "--- Script Finished ---"
+        bash -c "

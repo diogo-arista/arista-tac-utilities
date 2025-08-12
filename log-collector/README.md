@@ -1,9 +1,5 @@
 # Arista Log Collector Script
 
-**Version:** 14  
-**Author:** [Your Name or Team]  
-**Last Updated:** [Date]
-
 ## Overview
 
 This script automates the collection of logs from Arista EOS devices. It supports both:
@@ -126,15 +122,3 @@ If uploading to Arista FTP, you'll be asked to provide an email address for auth
 - **Support bundle not created:** Older EOS versions may not support `send support-bundle`  
 - **File transfer issues:** Verify SCP/FTP connectivity and credentials  
 
----
-
-## License
-
-MIT License or Internal Use Only – update this section based on your distribution policy.
-
----
-
-## Contact
-
-For improvements or bug reports, please contact:  
-[Your Email or Team Name]

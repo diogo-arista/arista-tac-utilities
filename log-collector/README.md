@@ -4,37 +4,60 @@
 
 This script automates the collection of logs from Arista EOS devices. It supports both:
 
-- **Remote execution**: From a Linux/macOS system using SSH to connect to a target Arista device
-- **Local on-device execution**: When the script is run directly on an EOS device (e.g., via Bash or FastCli)
+- **Remote execution**: From a Linux/macOS system using SSH to connect to a target Arista device  
+- **Local on-device execution**: When the script is run directly on an EOS device (e.g., via Bash or FastCli)  
 
 The script intelligently determines the EOS version and uses the appropriate method for log collection (`send support-bundle` or legacy commands). It also supports transferring the resulting log bundle to your local machine or uploading it to Arista's FTP server.
 
 ---
 
+## 🖥️ Running from GitHub (no clone required)
+
+You can run the script directly without cloning the repository:
+
+### Using `curl`:
+```bash
+bash <(curl -s https://raw.githubusercontent.com/diogo-arista/arista-tac-utilities/main/log-collector/log-collector.sh)
+```
+
+### Using `wget`:
+```bash
+bash <(wget -qO- https://raw.githubusercontent.com/diogo-arista/arista-tac-utilities/main/log-collector/log-collector.sh)
+```
+
+> ⚠️ Only use this method with trusted scripts. To inspect before running:
+```bash
+curl -O https://raw.githubusercontent.com/diogo-arista/arista-tac-utilities/main/log-collector/log-collector.sh
+chmod +x log-collector.sh
+./log-collector.sh
+```
+
+---
+
 ## Features
 
-- SSH master connection for faster and cleaner remote execution
-- EOS version detection and context-aware log collection
+- SSH master connection for faster and cleaner remote execution  
+- EOS version detection and context-aware log collection  
 - Generates and collects:
-  - `support-bundle` ZIP file (for EOS ≥ 4.26.1F)
-  - `show tech-support` output and compressed logs (for older EOS versions)
+  - `support-bundle` ZIP file (for EOS ≥ 4.26.1F)  
+  - `show tech-support` output and compressed logs (for older EOS versions)  
 - File transfer options:
-  - Download log bundle to local machine
-  - Upload via `scp` or `ftp` (e.g., to Arista FTP)
-- Supports both remote and on-device modes
+  - Download log bundle to local machine  
+  - Upload via `scp` or `ftp` (e.g., to Arista FTP)  
+- Supports both remote and on-device modes  
 
 ---
 
 ## Requirements
 
 ### On your local (remote) machine:
-- Bash (Linux/macOS)
-- `ssh` and `scp` (OpenSSH)
-- Internet access (for FTP uploads to Arista)
+- Bash (Linux/macOS)  
+- `ssh` and `scp` (OpenSSH)  
+- Internet access (for FTP uploads to Arista)  
 
 ### On the target EOS device:
-- EOS version ≥ 4.18 recommended
-- For FTP upload: network reachability to `ftp.arista.com`
+- EOS version ≥ 4.18 recommended  
+- For FTP upload: network reachability to `ftp.arista.com`  
 
 ---
 
@@ -121,4 +144,3 @@ If uploading to Arista FTP, you'll be asked to provide an email address for auth
 - **SSH connection fails:** Ensure device is reachable and correct credentials are used  
 - **Support bundle not created:** Older EOS versions may not support `send support-bundle`  
 - **File transfer issues:** Verify SCP/FTP connectivity and credentials  
-

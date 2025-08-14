@@ -1,11 +1,9 @@
 #!/bin/bash
 #================================================================================
-# Arista Log Collector Script (v17 - Robust CLI, SCP via EOS copy, URL-encoding,
-# Legacy collector, safer SSH, better quoting and size checks)
-#
-# This script collects logs/support-bundles from Arista EOS devices and lets you:
-#  - Download to your machine (remote mode)
-#  - Upload from the device via SCP or FTP (both modes) using EOS 'copy'
+# Arista Log Collector Script (v17.1)
+# - Fix: argument parser typo (esac)
+# - Fix: robust remote bash quoting (ssh_bash)
+# - Plus all v17 improvements
 #================================================================================
 
 set -euo pipefail
@@ -55,7 +53,7 @@ urlencode() {
   done
 }
 
-ver_ge() {  # usage: ver_ge MIN CURRENT -> true if CURRENT >= MIN (version sort)
+ver_ge() {  # usage: ver_ge MIN CURRENT -> true if CURRENT >= MIN
   [ "$(printf '%s\n' "$1" "$2" | sort -V | head -n1)" = "$1" ]
 }
 
@@ -107,11 +105,13 @@ ssh_cli() {
 }
 
 ssh_bash() {
-  # Runs bash on the device (via EOS CLI) with -lc
-  # Be careful with quoting in caller.
+  # Run an arbitrary bash command on the device using EOS Cli -> bash -lc "<cmd>"
+  # We escape backslashes and double quotes so they survive all layers.
   local cmd="$*"
+  cmd=${cmd//\\/\\\\}
+  cmd=${cmd//\"/\\\"}
   ssh -S "$CONTROL_SOCKET" "${SSH_BASE_OPTS[@]}" "$USERNAME@$TARGET_HOST" \
-    "Cli -c \"enable; bash -lc '$cmd'\""
+    "Cli -c \"enable; bash -lc \\\"$cmd\\\"\""
 }
 
 scp_exec() {
@@ -125,7 +125,7 @@ while [[ $# -gt 0 ]]; do
     --strict-hostkey) STRICT_SSH="yes"; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1"; usage; exit 1 ;;
-  caseesac
+  esac
 done
 configure_ssh_opts
 trap close_ssh_master_conn EXIT INT TERM
@@ -183,7 +183,7 @@ collect_eos_logs() {
     # Capture tech-support to flash and tar it
     if [[ "$EXECUTION_MODE" == "remote" ]]; then
       ssh_cli "enable; terminal length 0; show tech-support | redirect flash:tech-support.txt"
-      ssh_bash "cd $FLASH_DIR && tar -czf '$legacy_name' tech-support.txt"
+      ssh_bash "cd $FLASH_DIR && tar -czf \"$legacy_name\" tech-support.txt"
     else
       FastCli -p 15 -c "terminal length 0; show tech-support | redirect flash:tech-support.txt"
       FastCli -p 15 -c "bash -lc 'cd $FLASH_DIR && tar -czf \"$legacy_name\" tech-support.txt'"
@@ -198,14 +198,14 @@ collect_eos_logs() {
 
   # Show size / free space
   if [[ "$EXECUTION_MODE" == "remote" ]]; then
-    ssh_bash "ls -lh '$LOG_FILE_PATH_REMOTE' || stat -c '%n %s bytes' '$LOG_FILE_PATH_REMOTE'; echo; df -h '$FLASH_DIR' | tail -1"
+    ssh_bash "ls -lh \"$LOG_FILE_PATH_REMOTE\" || stat -c '%n %s bytes' \"$LOG_FILE_PATH_REMOTE\"; echo; df -h \"$FLASH_DIR\" | tail -1"
   else
     FastCli -p 15 -c "bash -lc 'ls -lh \"$LOG_FILE_PATH_REMOTE\" || stat -c \"%n %s bytes\" \"$LOG_FILE_PATH_REMOTE\"; echo; df -h \"$FLASH_DIR\" | tail -1'"
   fi
 }
 
 # --- FTP Destination Builder ---
-# Prompts user and returns a single line with the FTP URL (ftp://user:pass@host/path/)
+# Prompts user and returns the FTP URL (ftp://user:pass@host/path/)
 handle_ftp_destination() {
   local ftp_url=""
   while true; do
@@ -283,7 +283,7 @@ transfer_logs() {
                 scp_url="scp://$dest_user@$dest_host$dest_path"
                 echo "Executing on device: copy $LOG_FILE_FLASH $scp_url"
                 ssh_cli "enable; copy $LOG_FILE_FLASH $scp_url"
-                echo "Upload command sent (the device may prompt for password on its console/log)."
+                echo "Upload command sent (device may prompt for password on its console/log)."
                 break
                 ;;
               ftp)
@@ -353,7 +353,7 @@ transfer_logs() {
 
 # --- Main Logic ---
 main() {
-  print_header "Arista Log Collector (v17)"
+  print_header "Arista Log Collector (v17.1)"
 
   # Detect on-device
   if [[ -f /etc/Eos-release ]]; then

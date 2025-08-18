@@ -1,4 +1,8 @@
-# Arista Log Collector Script
+# Arista Log Collector
+
+A single-script utility to collect and transfer support logs from Arista EOS devices. It works remotely (from your laptop or jump host over SSH) or locally on the device.
+
+---
 
 ## Overview
 
@@ -36,111 +40,151 @@ chmod +x log-collector.sh
 
 ## Features
 
-- SSH master connection for faster and cleaner remote execution  
-- EOS version detection and context-aware log collection  
-- Generates and collects:
-  - `support-bundle` ZIP file (for EOS ≥ 4.26.1F)  
-  - `show tech-support` output and compressed logs (for older EOS versions)  
-- File transfer options:
-  - Download log bundle to local machine  
-  - Upload via `scp` or `ftp` (e.g., to Arista FTP)  
-- Supports both remote and on-device modes  
+- **Remote or on-device execution**
+  - Remote mode uses SSH ControlMaster for a persistent connection.
+  - On-device mode is detected via `/etc/Eos-release` and uses `FastCli`.
+- **Automatic collection per EOS version**
+  - EOS ≥ 4.26.1F: `send support-bundle flash:/ case-number <CASE>`.
+  - Older EOS: legacy TAC bundle (show tech plus misc logs) archived on `/mnt/flash`.
+- **Smart bundle discovery**
+  - Finds the latest `support-bundle-*<CASE>*.zip` or `TAC-bundle-<CASE>-*.tar` on `/mnt/flash`.
+- **Flexible transfer options**
+  - Download to your machine via SCP.
+  - Device-side upload via SCP or FTP.
+  - VRF-aware transfers using `run cli vrf <vrf>`.
+  - Default FTP target: `ftp.arista.com/support/<CASE>/` with anonymous login (email as password).
+- **Interactive menus or non-interactive flags** for automation.
 
 ---
 
 ## Requirements
 
-### On your local (remote) machine:
-- Bash (Linux/macOS)  
-- `ssh` and `scp` (OpenSSH)  
-- Internet access (for FTP uploads to Arista)  
+### Remote (workstation or jump host)
+- `bash`, `ssh`, `scp`
+- `grep`, `awk`, `sort`, `tar`, `gzip`
+- GNU `sort -V` for version comparison  
+  On macOS, install coreutils or run the script from Linux.
 
-### On the target EOS device:
-- EOS version ≥ 4.18 recommended  
-- For FTP upload: network reachability to `ftp.arista.com`  
+### On the EOS device
+- `FastCli` available on EOS
+- Privileges to run `enable` commands and access `/mnt/flash`
+- For legacy bundling the script may call `sudo` inside EOS bash for `tar` and `gzip`
+
+---
+
+## Install
+
+```bash
+chmod +x log-collector.sh
+```
+
+No further installation is needed.
 
 ---
 
 ## Usage
 
-### Remote execution (from your workstation)
+```
+./log-collector.sh [-d <device>] [-u <user>] [-c <case>] [-t <proto>] [-r <host>] [-v <vrf>] [-h]
+```
 
+**Options**
+- `-d <device>`  Target device hostname or IP (remote mode)
+- `-u <user>`    Username for login (remote mode)
+- `-c <case>`    TAC case number used in filenames and FTP path
+- `-t <proto>`   Initial transfer protocol: `scp` or `ftp`
+- `-r <host>`    Destination host for the initial transfer  
+  Required when `-t scp`. Optional for `-t ftp` (defaults to `ftp.arista.com`).
+- `-v <vrf>`     VRF to use for device-side copy (for example `management`)
+- `-h`           Show help and exit
+
+**Behavior notes**
+- If `-t scp` is used, `-r` is required.
+- If `-t ftp` is used without `-r`, the script defaults to `ftp.arista.com/support/<CASE>/`.
+- Without flags the script runs fully interactive.
+
+---
+
+## Quick starts
+
+### Remote interactive
 ```bash
-./log_collector.sh
+./log-collector.sh
+# Prompts for device, username (default admin), and case number
+# Collects logs and then shows a transfer menu
 ```
 
-You will be prompted to:
-
-1. Enter the Arista device IP or hostname  
-2. Enter your username (default: `admin`)  
-3. Enter the TAC case number (optional, defaults to `000000`)  
-4. Authenticate via SSH  
-5. Choose how to transfer the collected logs  
-
-### On-device execution (locally on an EOS device)
-
+### Remote with immediate FTP to Arista
 ```bash
-bash log_collector.sh
+./log-collector.sh -d sw1.example.net -u admin -c 123456 -t ftp
+# Defaults to ftp.arista.com/support/123456/
+# You will be prompted for your email which is used as the FTP password for anonymous login
 ```
 
-The script will:
-
-- Automatically detect it's running on an EOS device  
-- Collect logs locally and store them on `/mnt/flash/`  
-- Offer to upload them to a remote server or Arista FTP  
-
----
-
-## Example Output
-
+### Remote with immediate SCP upload via a VRF
+```bash
+./log-collector.sh -d 10.10.10.10 -u admin -c 123456 -t scp -r files.example.net -v management
+# You will be prompted for destination user and destination path
 ```
------------------------------------------------------
-  Arista Log Collector
------------------------------------------------------
-Enter target Arista device hostname or IP: 10.10.10.10
-Enter username [admin]:
-Enter TAC case number [000000]: 123456
------------------------------------------------------
-  Establishing Remote Connection
------------------------------------------------------
-You will be prompted for the password for 'admin@10.10.10.10'.
-Connection successful. Proceeding...
-...
-Log bundle created on device: /mnt/flash/support-bundle-123456.zip
+
+### On the EOS device
+```bash
+bash ./log-collector.sh -c 123456
+# Detects on-device mode, collects logs, then offers SCP/FTP upload menu
 ```
 
 ---
 
-## File Transfer Options
+## What it does
 
-After the logs are collected, you can choose:
-
-1. **Download** the file from the device to your current directory  
-2. **Upload** from the device to another system via `scp` or `ftp`  
-3. **Do nothing** and handle the logs manually later  
-
-If uploading to Arista FTP, you'll be asked to provide an email address for authentication.
-
----
-
-## Notes
-
-- EOS versions **≥ 4.26.1F** support the `send support-bundle` command  
-- For older versions, the script falls back to traditional `show tech-support` collection and archiving of system logs  
-- Temporary files may be stored in `/tmp` or `/mnt/flash/` depending on the execution context  
+1. **Determines execution mode**
+   - Presence of `/etc/Eos-release` means on-device.
+   - Otherwise remote and uses SSH ControlMaster.
+2. **Detects EOS version** with `show version`.
+3. **Collects logs**
+   - New method (≥ 4.26.1F): `send support-bundle flash:/ case-number <CASE>`.
+   - Legacy method: `show tech-support` to gzip plus tar of `/var/log/`, `/mnt/flash/debug/`, `/mnt/flash/Fossil/` if present, then packs a single bundle.
+4. **Finds the most recent bundle** on `/mnt/flash`.
+5. **Transfers the file**
+   - Remote menu: download to your machine, or instruct the device to upload via SCP or FTP.
+   - On-device menu: upload via SCP or FTP.
+   - If `-t ftp|scp` was specified, the initial transfer runs automatically before showing the menu.
 
 ---
 
-## Limitations
+## File locations and names
 
-- The script does not support EOS devices behind jump hosts or proxy  
-- Limited support for non-EOS (e.g., SONiC) platforms  
-- Requires interactive access (not fully non-interactive)  
+- Support bundle (new):  
+  `/mnt/flash/support-bundle-*<CASE>*.zip`
+- Legacy bundle (older EOS):  
+  `/mnt/flash/TAC-bundle-<CASE>-<HOST>-<YYYY-MM-DD--HHMM>.tar`
+
+The case number is included in filenames and in the default FTP destination path.
+
+---
+
+## Security notes
+
+- `StrictHostKeyChecking=no` is set for convenience. Adjust if you require stricter SSH host key verification.
+- For Arista FTP the script uses anonymous login and your email address as the password. Avoid sensitive credentials over plain FTP. Prefer SCP for end-to-end encryption.
+- Device-side copy commands run under EOS `enable`. Your role must have sufficient privileges.
 
 ---
 
 ## Troubleshooting
 
-- **SSH connection fails:** Ensure device is reachable and correct credentials are used  
-- **Support bundle not created:** Older EOS versions may not support `send support-bundle`  
-- **File transfer issues:** Verify SCP/FTP connectivity and credentials  
+- **SSH master connection failed**  
+  Check reachability, username, credentials, and that SSH is allowed from your host.
+
+- **Prompts or menus not visible**  
+  Do not redirect or suppress stderr. The script prints menu and status messages to stderr so you can still see device output on stdout.
+
+- **Could not find the generated support bundle**  
+  Check free space on `/mnt/flash` and that the device supports `send support-bundle` on EOS ≥ 4.26.1F. Otherwise the script falls back to legacy.
+
+- **Version comparison on macOS**  
+  Ensure GNU `sort -V` is available. Install coreutils or run from Linux.
+
+- **SCP or FTP issues with VRFs**  
+  Use `-v management` or the appropriate VRF so the device copies out via the correct egress interface.
+
